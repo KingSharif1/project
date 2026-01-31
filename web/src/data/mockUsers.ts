@@ -1,0 +1,71 @@
+import { User } from '../types';
+
+export const mockUsers: User[] = [
+  {
+    id: 'admin-1',
+    email: 'admin@transporthub.com',
+    fullName: 'Admin User',
+    role: 'admin',
+    isActive: true,
+    createdAt: new Date('2024-01-01').toISOString(),
+    updatedAt: new Date().toISOString(),
+  },
+  {
+    id: 'admin-2',
+    email: 'admin2@transporthub.com',
+    fullName: 'Sarah Admin',
+    role: 'admin',
+    isActive: true,
+    createdAt: new Date('2024-01-15').toISOString(),
+    updatedAt: new Date().toISOString(),
+  },
+  {
+    id: 'dispatcher-1',
+    email: 'dispatcher1@transporthub.com',
+    fullName: 'John Dispatcher - Downtown Medical',
+    role: 'dispatcher',
+    clinicId: 'clinic-1',
+    isActive: true,
+    createdAt: new Date('2024-02-01').toISOString(),
+    updatedAt: new Date().toISOString(),
+  },
+  {
+    id: 'dispatcher-2',
+    email: 'dispatcher2@transporthub.com',
+    fullName: 'Jane Dispatcher - Uptown Health',
+    role: 'dispatcher',
+    clinicId: 'clinic-2',
+    isActive: true,
+    createdAt: new Date('2024-02-10').toISOString(),
+    updatedAt: new Date().toISOString(),
+  },
+  {
+    id: 'dispatcher-3',
+    email: 'dispatcher3@transporthub.com',
+    fullName: 'Mike Dispatcher - Brooklyn Care',
+    role: 'dispatcher',
+    clinicId: 'clinic-3',
+    isActive: true,
+    createdAt: new Date('2024-03-01').toISOString(),
+    updatedAt: new Date().toISOString(),
+  },
+  {
+    id: 'dispatcher-4',
+    email: 'dispatcher4@transporthub.com',
+    fullName: 'Lisa Dispatcher - Queens Medical',
+    role: 'dispatcher',
+    clinicId: 'clinic-4',
+    isActive: true,
+    createdAt: new Date('2024-03-15').toISOString(),
+    updatedAt: new Date().toISOString(),
+  },
+];
+
+export const mockCredentials: Record<string, string> = {
+  'admin@transporthub.com': 'admin123',
+  'admin2@transporthub.com': 'admin123',
+  'dispatcher1@transporthub.com': 'dispatcher123',
+  'dispatcher2@transporthub.com': 'dispatcher123',
+  'dispatcher3@transporthub.com': 'dispatcher123',
+  'dispatcher4@transporthub.com': 'dispatcher123',
+};

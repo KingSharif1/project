@@ -1,0 +1,86 @@
+{
+  "expo": {
+    "name": "Fort Worth Transportation",
+    "slug": "fw-transportation",
+    "version": "2.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#2563eb"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "buildNumber": "1",
+      "bundleIdentifier": "com.fwtransportation.app",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "We need your location to provide accurate pickup and delivery tracking.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "We need your location to track trips and provide real-time updates to dispatchers and passengers.",
+        "NSLocationAlwaysUsageDescription": "Background location access is required to track active trips even when the app is not in use.",
+        "NSCameraUsageDescription": "We need camera access to capture trip photos and signatures.",
+        "NSPhotoLibraryUsageDescription": "We need photo library access to save and upload trip documentation.",
+        "NSPhotoLibraryAddUsageDescription": "We need permission to save photos to your library.",
+        "NSFaceIDUsageDescription": "Use Face ID to quickly and securely log in to your driver account.",
+        "NSUserNotificationUsageDescription": "We need permission to send you important trip and dispatch notifications.",
+        "UIBackgroundModes": ["location", "fetch", "remote-notification"]
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#2563eb"
+      },
+      "versionCode": 1,
+      "package": "com.fwtransportation.app",
+      "permissions": [
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_BACKGROUND_LOCATION",
+        "CAMERA",
+        "READ_EXTERNAL_STORAGE",
+        "WRITE_EXTERNAL_STORAGE",
+        "FOREGROUND_SERVICE",
+        "USE_BIOMETRIC",
+        "USE_FINGERPRINT"
+      ],
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "data": [
+            {
+              "scheme": "https",
+              "host": "fwtransportation.com"
+            }
+          ],
+          "category": ["BROWSABLE", "DEFAULT"]
+        }
+      ]
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "Allow Fort Worth Transportation to use your location for trip tracking and real-time updates."
+        }
+      ]
+    ],
+    "updates": {
+      "fallbackToCacheTimeout": 0
+    },
+    "runtimeVersion": {
+      "policy": "sdkVersion"
+    },
+    "owner": "fwtransportation",
+    "scheme": "fwtransport",
+    "privacy": "unlisted"
+  }
+}
