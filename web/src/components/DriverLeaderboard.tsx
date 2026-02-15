@@ -8,15 +8,15 @@ export const DriverLeaderboard: React.FC = () => {
   const leaderboard = useMemo(() => {
     return drivers.map(driver => {
       const driverTrips = trips.filter(t => t.driverId === driver.id && t.status === 'completed');
-      const revenue = driverTrips.reduce((sum, t) => sum + t.fare, 0);
-      const totalDistance = driverTrips.reduce((sum, t) => sum + t.distance, 0);
+      const revenue = driverTrips.reduce((sum, t) => sum + (t.fare || 0), 0);
+      const totalDistance = driverTrips.reduce((sum, t) => sum + (t.distance || 0), 0);
 
       return {
         ...driver,
         completedTrips: driverTrips.length,
         revenue,
         totalDistance,
-        score: (driverTrips.length * 10) + (driver.rating * 20) + (revenue / 10)
+        score: (driverTrips.length * 10) + ((driver.rating || 0) * 20) + (revenue / 10)
       };
     }).sort((a, b) => b.score - a.score).slice(0, 5);
   }, [drivers, trips]);
@@ -74,13 +74,13 @@ export const DriverLeaderboard: React.FC = () => {
                   </div>
                   <div>
                     <p className="text-xs text-gray-500">Revenue</p>
-                    <p className="text-sm font-semibold text-gray-900">${driver.revenue.toFixed(0)}</p>
+                    <p className="text-sm font-semibold text-gray-900">${(driver.revenue || 0).toFixed(0)}</p>
                   </div>
                   <div>
                     <p className="text-xs text-gray-500">Rating</p>
                     <div className="flex items-center space-x-1">
                       <Star className="w-3 h-3 text-amber-500 fill-amber-500" />
-                      <p className="text-sm font-semibold text-gray-900">{driver.rating.toFixed(1)}</p>
+                      <p className="text-sm font-semibold text-gray-900">{(driver.rating || 0).toFixed(1)}</p>
                     </div>
                   </div>
                 </div>

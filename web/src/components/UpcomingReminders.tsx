@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { Bell, Send, CheckCircle, AlertCircle, Clock, History, Filter, MessageSquare, Calendar, Phone, User } from 'lucide-react';
 import { useApp } from '../context/AppContext';
-import { supabase } from '../lib/supabase';
+import * as api from '../services/api';
 
 interface UpcomingRemindersProps {
   hoursAhead?: number;
@@ -41,64 +41,42 @@ export const UpcomingReminders: React.FC<UpcomingRemindersProps> = ({ hoursAhead
   const loadSMSHistory = async () => {
     setLoadingHistory(true);
     try {
-      let query = supabase
-        .from('sms_notifications')
-        .select('*')
-        .order('created_at', { ascending: false });
+      // Calculate date range based on filter
+      let startDate: string | undefined;
+      let endDate: string | undefined;
 
-      const now = new Date();
       if (dateFilter === 'today') {
-        const startOfDay = new Date();
-        startOfDay.setHours(0, 0, 0, 0);
-        const endOfDay = new Date();
-        endOfDay.setHours(23, 59, 59, 999);
-        query = query.gte('created_at', startOfDay.toISOString()).lte('created_at', endOfDay.toISOString());
+        const s = new Date(); s.setHours(0, 0, 0, 0);
+        const e = new Date(); e.setHours(23, 59, 59, 999);
+        startDate = s.toISOString(); endDate = e.toISOString();
       } else if (dateFilter === 'yesterday') {
-        const startOfYesterday = new Date();
-        startOfYesterday.setDate(startOfYesterday.getDate() - 1);
-        startOfYesterday.setHours(0, 0, 0, 0);
-        const endOfYesterday = new Date();
-        endOfYesterday.setDate(endOfYesterday.getDate() - 1);
-        endOfYesterday.setHours(23, 59, 59, 999);
-        query = query.gte('created_at', startOfYesterday.toISOString()).lte('created_at', endOfYesterday.toISOString());
+        const s = new Date(); s.setDate(s.getDate() - 1); s.setHours(0, 0, 0, 0);
+        const e = new Date(); e.setDate(e.getDate() - 1); e.setHours(23, 59, 59, 999);
+        startDate = s.toISOString(); endDate = e.toISOString();
       } else if (dateFilter === 'tomorrow') {
-        const startOfTomorrow = new Date();
-        startOfTomorrow.setDate(startOfTomorrow.getDate() + 1);
-        startOfTomorrow.setHours(0, 0, 0, 0);
-        const endOfTomorrow = new Date();
-        endOfTomorrow.setDate(endOfTomorrow.getDate() + 1);
-        endOfTomorrow.setHours(23, 59, 59, 999);
-        query = query.gte('created_at', startOfTomorrow.toISOString()).lte('created_at', endOfTomorrow.toISOString());
+        const s = new Date(); s.setDate(s.getDate() + 1); s.setHours(0, 0, 0, 0);
+        const e = new Date(); e.setDate(e.getDate() + 1); e.setHours(23, 59, 59, 999);
+        startDate = s.toISOString(); endDate = e.toISOString();
       } else if (dateFilter === 'week') {
-        const weekAgo = new Date();
-        weekAgo.setDate(weekAgo.getDate() - 7);
-        query = query.gte('created_at', weekAgo.toISOString());
+        const s = new Date(); s.setDate(s.getDate() - 7);
+        startDate = s.toISOString();
       } else if (dateFilter === 'month') {
-        const monthAgo = new Date();
-        monthAgo.setMonth(monthAgo.getMonth() - 1);
-        query = query.gte('created_at', monthAgo.toISOString());
+        const s = new Date(); s.setMonth(s.getMonth() - 1);
+        startDate = s.toISOString();
       } else if (dateFilter === 'range' && dateRange.start && dateRange.end) {
-        const startDate = new Date(dateRange.start);
-        startDate.setHours(0, 0, 0, 0);
-        const endDate = new Date(dateRange.end);
-        endDate.setHours(23, 59, 59, 999);
-        query = query.gte('created_at', startDate.toISOString()).lte('created_at', endDate.toISOString());
+        const s = new Date(dateRange.start); s.setHours(0, 0, 0, 0);
+        const e = new Date(dateRange.end); e.setHours(23, 59, 59, 999);
+        startDate = s.toISOString(); endDate = e.toISOString();
       } else if (dateFilter === 'specific-date' && specificDate) {
-        const startOfDate = new Date(specificDate);
-        startOfDate.setHours(0, 0, 0, 0);
-        const endOfDate = new Date(specificDate);
-        endOfDate.setHours(23, 59, 59, 999);
-        query = query.gte('created_at', startOfDate.toISOString()).lte('created_at', endOfDate.toISOString());
+        const s = new Date(specificDate); s.setHours(0, 0, 0, 0);
+        const e = new Date(specificDate); e.setHours(23, 59, 59, 999);
+        startDate = s.toISOString(); endDate = e.toISOString();
       }
 
-      query = query.limit(100);
-
-      const { data, error } = await query;
-
-      if (error) throw error;
-      setSmsHistory(data || []);
-    } catch (error) {
-      console.error('Error loading SMS history:', error);
+      const result = await api.getSmsHistory(startDate, endDate, 100);
+      setSmsHistory(result.data || []);
+    } catch (_) {
+      // SMS provider not connected yet
     } finally {
       setLoadingHistory(false);
     }
@@ -133,9 +111,9 @@ export const UpcomingReminders: React.FC<UpcomingRemindersProps> = ({ hoursAhead
     return drivers?.find(d => d.id === driverId);
   };
 
-  const getFacility = (facilityId?: string) => {
-    if (!facilityId) return null;
-    return clinics?.find(c => c.id === facilityId);
+  const getContractor = (contractorId?: string) => {
+    if (!contractorId) return null;
+    return clinics?.find(c => c.id === contractorId);
   };
 
   const getTripById = (tripId?: string) => {
@@ -223,33 +201,15 @@ export const UpcomingReminders: React.FC<UpcomingRemindersProps> = ({ hoursAhead
         const fullDate = formatFullDate(trip.scheduledTime);
         const time = formatTime(trip.scheduledTime);
         const passengerName = trip.customerName || patient?.name || 'Passenger';
-        const facility = getFacility(trip.facilityId);
-        const facilityName = facility?.name || 'your healthcare facility';
+        const contractor = getContractor(trip.contractorId);
+        const contractorName = contractor?.name || 'your healthcare facility';
 
         // Professional clinic-branded message with confirmation request
-        const message = `Hello, this is Fort Worth Non-Emergency Transportation on behalf of ${facilityName}. You are scheduled for pickup on ${fullDate}, at ${time} from ${trip.pickupLocation}. Please confirm your trip by replying Confirm or Cancel.`;
+        const message = `Hello, this is Fort Worth Non-Emergency Transportation on behalf of ${contractorName}. You are scheduled for pickup on ${fullDate}, at ${time} from ${trip.pickupLocation}. Please confirm your trip by replying Confirm or Cancel.`;
 
-        const { data: smsData, error: smsError } = await supabase.functions.invoke('sms-notifications', {
-          body: {
-            to: phoneNumber,
-            message: message,
-            tripId: tripId,
-            messageType: 'trip_reminder'
-          }
-        });
-
-        if (smsError) {
-          console.error('SMS error:', smsError);
-
-          const errorMsg = smsError.message || 'Failed to send';
-          const isTwilioVerificationError = errorMsg.includes('unverified') || errorMsg.includes('Trial accounts');
-
-          newStatus.set(tripId, {
-            success: false,
-            message: isTwilioVerificationError ? 'Phone not verified' : 'Failed to send'
-          });
-        } else {
-          const responseStatus = smsData?.status || 'unknown';
+        try {
+          const smsResult = await api.sendSms(phoneNumber, message, tripId);
+          const responseStatus = smsResult.data?.status || 'unknown';
           const isSimulated = responseStatus === 'simulated';
 
           newStatus.set(tripId, {
@@ -257,17 +217,22 @@ export const UpcomingReminders: React.FC<UpcomingRemindersProps> = ({ hoursAhead
             message: isSimulated ? 'Simulated (no Twilio)' : 'SMS sent'
           });
 
-          await supabase
-            .from('trip_reminders')
-            .insert({
-              trip_id: tripId,
-              reminder_type: 'manual',
-              scheduled_for: new Date().toISOString(),
-              sent_at: new Date().toISOString(),
-              status: isSimulated ? 'simulated' : 'sent',
-              sms_sent: !isSimulated,
-              email_sent: false
-            });
+          await api.logTripReminder({
+            tripId,
+            reminderType: 'manual',
+            status: isSimulated ? 'simulated' : 'sent',
+            smsSent: !isSimulated,
+            emailSent: false,
+          });
+        } catch (smsErr: any) {
+          // SMS provider not connected yet
+          const errorMsg = smsErr.message || 'Failed to send';
+          const isTwilioVerificationError = errorMsg.includes('unverified') || errorMsg.includes('Trial accounts');
+
+          newStatus.set(tripId, {
+            success: false,
+            message: isTwilioVerificationError ? 'Phone not verified' : 'Failed to send'
+          });
         }
       } catch (error) {
         console.error('Error sending reminder:', error);

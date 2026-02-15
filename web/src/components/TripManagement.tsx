@@ -3,6 +3,7 @@ import { Plus, CreditCard as Edit2, Trash2, UserPlus, MapPin, Navigation, Calend
 import { useApp } from '../context/AppContext';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabase';
+import * as api from '../services/api';
 import { Modal } from './Modal';
 import { StatusBadge } from './StatusBadge';
 import { AddressAutocomplete } from './AddressAutocomplete';
@@ -14,7 +15,7 @@ import { ManualCompletionModal } from './ManualCompletionModal';
 import { TripHistory } from './TripHistory';
 import { RiderAutocomplete } from './RiderAutocomplete';
 import Toast, { ToastType } from './Toast';
-import { Trip, Facility } from '../types';
+import { Trip, Contractor } from '../types';
 import { detectTripConflicts } from '../utils/conflictDetection';
 import { generateInvoicePDF, generateInvoiceNumber, isTripBillable, getBillingReason } from '../utils/invoiceUtils';
 import { exportToCSV, exportToPDF } from '../utils/exportUtils';
@@ -52,10 +53,10 @@ const AVAILABLE_COLUMNS: ColumnConfig[] = [
   { id: 'pickupLocation', label: 'Pickup Address', description: 'Pickup location' },
   { id: 'dropoffLocation', label: 'Dropoff Address', description: 'Dropoff location' },
   { id: 'distance', label: 'Mileage', description: 'Trip distance in miles' },
-  { id: 'fare', label: 'Contracted Rate', description: 'Contracted rate charged to facility' },
+  { id: 'fare', label: 'Contractor', description: 'Contractor assigned to this trip' },
   { id: 'driverPayout', label: 'Driver Rate', description: 'Driver payout amount' },
   { id: 'clinic', label: 'Transport Company', description: 'Transportion Provider', adminOnly: true },
-  { id: 'facility', label: 'Facility / Account', description: 'The Facility or Account being billed', adminOnly: true },
+  { id: 'contractor', label: 'Contractor / Account', description: 'The Contractor or Account being billed', adminOnly: true },
   { id: 'actions', label: 'Actions', description: 'Trip actions menu', required: true },
 ];
 
@@ -79,8 +80,8 @@ const COLUMN_PRESETS = {
 };
 
 export const TripManagement: React.FC = () => {
-  const { trips, drivers, addTrip, updateTrip, deleteTrip, assignDriver, reinstateTrip, clinics, facilities, tripSources, refreshData } = useApp();
-  const { user, isAdmin, canAssignDrivers, isFacilityDispatcher } = useAuth();
+  const { trips, drivers, addTrip, updateTrip, deleteTrip, assignDriver, reinstateTrip, clinics, contractors, tripSources, refreshData } = useApp();
+  const { user, isAdmin, canAssignDrivers, isContractorDispatcher } = useAuth();
 
   const userClinic = clinics.find(c => c.id === user?.clinicId);
   const isMHMRUser = isAdmin || user?.clinicId === 'mhmr' || userClinic?.name?.toLowerCase().includes('mhmr');
@@ -117,8 +118,9 @@ export const TripManagement: React.FC = () => {
   const [filterClinic, setFilterClinic] = useState<string>('all');
   const [openActionMenu, setOpenActionMenu] = useState<string | null>(null);
   const [isAutoAssigning, setIsAutoAssigning] = useState(false);
+  const [showBulkActions, setShowBulkActions] = useState(false);
   const [mileageBreakdown, setMileageBreakdown] = useState<{ leg1?: number; leg2?: number } | null>(null);
-  const [rateBreakdown, setRateBreakdown] = useState<{ facility: string; driver: string } | null>(null);
+  const [rateBreakdown, setRateBreakdown] = useState<{ contractor: string; driver: string } | null>(null);
   const [isCalculatingMileage, setIsCalculatingMileage] = useState(false);
   const [cancellationNote, setCancellationNote] = useState('');
   const [noShowNote, setNoShowNote] = useState('');
@@ -236,10 +238,9 @@ export const TripManagement: React.FC = () => {
     returnPickupLocation: '',
     returnDropoffLocation: '',
     willCall: false,
-    facilityId: '',
+    contractorId: '',
     classification: '',
     driverId: '',
-    driverPayout: '',
     driverPayout: '',
     levelOfAssistance: '',
     patientId: '', // Track selected/created patient ID
@@ -249,17 +250,9 @@ export const TripManagement: React.FC = () => {
   const [riderMode, setRiderMode] = useState<'search' | 'new'>('search');
   const [patientForm, setPatientForm] = useState({
     company: '', // Helper for clinicId
-    middleName: '',
     dateOfBirth: '',
-    gender: '',
-    mobileNumber: '',
-    accountNumber: '', // Map to insurancePolicyNumber
-    status: 'active',
-    rideAlone: false,
-    defaultLevelOfService: '', // Map to mobilityType
-    addressLabel: '',
-    landmark: '',
-    addressLine2: '',
+    accountNumber: '',
+    defaultLevelOfService: '', // Map to serviceLevel
   });
 
   // Reset patient form when mode changes
@@ -278,7 +271,7 @@ export const TripManagement: React.FC = () => {
     }
   }, [riderMode, user?.clinicId]);
 
-  const [additionalStops, setAdditionalStops] = useState<Array<{ location: string; time: string }>>([]);
+  const [additionalStops, setAdditionalStops] = useState<Array<{ pickupLocation: string; dropoffLocation: string }>>([]);
 
   // Auto-fill return trip addresses when pickup/dropoff changes
   useEffect(() => {
@@ -306,9 +299,12 @@ export const TripManagement: React.FC = () => {
   }, [formData.willCall]);
 
   // Auto-calculate mileage when addresses change
+  // Only trigger when addresses look like full addresses (contain a comma — from autocomplete selection)
   useEffect(() => {
+    const isFullAddress = (addr: string) => addr && addr.includes(',') && addr.length > 10;
+
     const calculateMileageAuto = async () => {
-      if (formData.pickupLocation && formData.dropoffLocation && !editingTrip) {
+      if (isFullAddress(formData.pickupLocation) && isFullAddress(formData.dropoffLocation) && !editingTrip) {
         try {
           setIsCalculatingMileage(true);
           const result = await calculateDistance(
@@ -324,7 +320,7 @@ export const TripManagement: React.FC = () => {
               const returnPickup = formData.returnPickupLocation || formData.dropoffLocation;
               const returnDropoff = formData.returnDropoffLocation || formData.pickupLocation;
 
-              if (returnPickup && returnDropoff) {
+              if (isFullAddress(returnPickup) && isFullAddress(returnDropoff)) {
                 const leg2Result = await calculateDistance(returnPickup, returnDropoff);
                 if (leg2Result.success) {
                   totalDistance += leg2Result.distanceMiles;
@@ -338,30 +334,6 @@ export const TripManagement: React.FC = () => {
               distance: totalDistance.toFixed(2),
             }));
             setMileageBreakdown(breakdown);
-
-            // Auto-calculate rates based on distance and service level
-            const driver = drivers.find(d => d.id === formData.driverId);
-            const clinic = clinics.find(c => c.id === formData.clinicId);
-            const rates = await calculateTripRates(
-              {
-                serviceLevel: formData.serviceLevel as any,
-                distanceMiles: totalDistance,
-                driverId: formData.driverId,
-                status: 'pending'
-              },
-              driver,
-              clinic
-            );
-
-            setFormData(prev => ({
-              ...prev,
-              driverPayout: rates.driverPayout.toString()
-            }));
-
-            setRateBreakdown({
-              facility: rates.facilityBreakdown,
-              driver: rates.driverBreakdown
-            });
           } else {
             console.warn('Distance calculation failed:', result.error);
           }
@@ -370,14 +342,12 @@ export const TripManagement: React.FC = () => {
         } finally {
           setIsCalculatingMileage(false);
         }
-      } else {
-        setIsCalculatingMileage(false);
       }
     };
 
     const debounceTimer = setTimeout(() => {
       calculateMileageAuto();
-    }, 1500);
+    }, 2000);
 
     return () => clearTimeout(debounceTimer);
   }, [formData.pickupLocation, formData.dropoffLocation, formData.returnPickupLocation, formData.returnDropoffLocation, formData.journeyType, editingTrip]);
@@ -389,8 +359,8 @@ export const TripManagement: React.FC = () => {
       if (distance > 0 && formData.serviceLevel) {
         try {
           const driver = drivers.find(d => d.id === formData.driverId);
-          const facilityId = formData.facilityId || formData.clinicId || user?.clinicId;
-          const clinic = clinics.find(c => c.id === facilityId);
+          const contractorId = formData.contractorId || user?.clinicId;
+          const clinic = clinics.find(c => c.id === contractorId);
 
           //console.log('Recalculating rates - Clinic:', clinic?.name, 'Service Level:', formData.serviceLevel);
 
@@ -413,7 +383,7 @@ export const TripManagement: React.FC = () => {
           }));
 
           setRateBreakdown({
-            facility: rates.facilityBreakdown,
+            contractor: rates.contractorBreakdown,
             driver: rates.driverBreakdown
           });
         } catch (error) {
@@ -424,7 +394,7 @@ export const TripManagement: React.FC = () => {
 
     // Recalculate for both new and existing trips to ensure rates match clinic configuration
     recalculateRates();
-  }, [formData.serviceLevel, formData.driverId, formData.clinicId, formData.facilityId, formData.distance]);
+  }, [formData.serviceLevel, formData.driverId, formData.contractorId, formData.distance]);
 
   const resetForm = () => {
     setFormData({
@@ -443,6 +413,7 @@ export const TripManagement: React.FC = () => {
       actualDropoffTime: '',
       distance: '',
       notes: '',
+      clinicNote: '',
       tripType: 'clinic',
       journeyType: 'one-way',
       serviceLevel: 'ambulatory',
@@ -450,10 +421,12 @@ export const TripManagement: React.FC = () => {
       returnPickupLocation: '',
       returnDropoffLocation: '',
       willCall: false,
-      facilityId: '',
+      contractorId: '',
       classification: '',
       driverId: '',
       driverPayout: '',
+      levelOfAssistance: '',
+      patientId: '',
     });
     setAdditionalStops([]);
     setEditingTrip(null);
@@ -505,17 +478,11 @@ export const TripManagement: React.FC = () => {
 
       try {
         const tripIds = trips.map(t => t.id);
-        const { data, error } = await supabase
-          .from('trip_signatures')
-          .select('*')
-          .in('trip_id', tripIds)
-          .in('signature_type', ['pickup', 'dropoff'])
-          .order('signed_at', { ascending: false });
-
-        if (error) throw error;
+        const result = await api.getTripSignatures(tripIds);
+        const data = result.data || [];
 
         const signaturesMap = new Map();
-        data?.forEach(sig => {
+        data.forEach((sig: any) => {
           if (!signaturesMap.has(sig.trip_id)) {
             signaturesMap.set(sig.trip_id, {});
           }
@@ -575,7 +542,7 @@ export const TripManagement: React.FC = () => {
         returnPickupLocation: trip.returnPickupLocation || '',
         returnDropoffLocation: trip.returnDropoffLocation || '',
         willCall: trip.willCall || false,
-        facilityId: trip.clinicId || '',
+        contractorId: trip.clinicId || '',
         classification: trip.classification || '',
         driverId: trip.driverId || '',
         driverPayout: trip.driverPayout?.toString() || '',
@@ -638,35 +605,24 @@ export const TripManagement: React.FC = () => {
       if (riderMode === 'new') {
         try {
           // Create new patient record
-          const { data: newPatient, error: patientError } = await supabase
-            .from('patients')
-            .insert({
-              first_name: formData.firstName,
-              last_name: formData.lastName,
+          const patientResult = await api.createPatient({
+              firstName: formData.firstName,
+              lastName: formData.lastName,
               phone: formData.customerPhone,
-              email: formData.customerEmail,
-              date_of_birth: patientForm.dateOfBirth || null,
-              address: formData.pickupLocation, // Using pickup as home address?
-              clinic_id: patientForm.company || (isAdmin ? null : user?.clinicId),
-              mobility_type: (patientForm.defaultLevelOfService as any) || 'ambulatory',
-              insurance_policy_number: patientForm.accountNumber,
-              special_needs: patientForm.rideAlone ? 'Ride Alone' : null,
-              medical_notes: formData.notes, // Using rider notes from form?
-              created_by: user?.id,
-              is_active: patientForm.status === 'active',
-              vehicle_provided_id: null, // Default
-              updated_at: new Date().toISOString(),
-            })
-            .select()
-            .single();
+              dateOfBirth: patientForm.dateOfBirth || null,
+              accountNumber: patientForm.accountNumber || null,
+              serviceLevel: patientForm.defaultLevelOfService || 'ambulatory',
+              notes: formData.notes || null,
+              clinicId: patientForm.company || (isAdmin ? null : user?.clinicId),
+            });
 
-          if (patientError) {
-            console.error('Error creating new patient:', patientError);
+          if (!patientResult.success || !patientResult.data) {
+            console.error('Error creating new patient');
             if (!confirm('Failed to save new rider profile. Continue creating trip anyway?')) {
               return;
             }
           } else {
-            finalPatientId = newPatient.id;
+            finalPatientId = patientResult.data.id;
             showToast('New rider profile created', 'success');
           }
         } catch (err) {
@@ -680,7 +636,7 @@ export const TripManagement: React.FC = () => {
         customerName: `${formData.firstName} ${formData.lastName}`.trim() || formData.customerName,
         customerPhone: formData.customerPhone,
         customerEmail: formData.customerEmail,
-        patientId: finalPatientId || null, // Link to patient
+        patientId: finalPatientId || undefined, // Link to patient
 
         fare: 0, // Default to 0 as field is removed
         distance: parseFloat(formData.distance) || 0,
@@ -691,17 +647,17 @@ export const TripManagement: React.FC = () => {
         tripType: formData.tripType,
         journeyType: formData.journeyType,
         serviceLevel: formData.serviceLevel,
-        clinicId: formData.facilityId || user?.clinicId || editingTrip?.clinicId || '',
-        facilityId: formData.facilityId || user?.clinicId || editingTrip?.facilityId || '',
+        clinicId: user?.clinicId || editingTrip?.clinicId || '',
+        contractorId: formData.contractorId || editingTrip?.contractorId || '',
         createdBy: user?.id,
-        driverId: formData.driverId || null,
+        driverId: formData.driverId || undefined,
         paymentStatus: 'unpaid' as const, // Default to unpaid
         paymentMethod: 'invoice' as const, // Default to invoice
         invoiceNumber: isPrivate ? invoiceNumber : undefined,
         invoiceDate: isPrivate ? new Date().toISOString() : undefined,
         billingAddress: undefined, // Field removed
         levelOfAssistance: formData.levelOfAssistance,
-        tripSourceId: null, // Field removed
+        tripSourceId: undefined, // Field removed
       };
 
       if (editingTrip) {
@@ -830,38 +786,33 @@ export const TripManagement: React.FC = () => {
           // Show success message for roundtrip
           showToast(`Roundtrip created successfully! Outbound: ${outboundTripNumber}, Return: ${returnTripNumber}`, 'success');
         } else if (isMultiStop && additionalStops.length > 0) {
-          let currentPickup = formData.pickupLocation;
+          // Build stops JSONB array for multi-stop trip - each stop has its own pickup and dropoff
+          const stopsArray = [
+            {
+              stopNumber: 1,
+              pickupAddress: formData.pickupLocation,
+              dropoffAddress: formData.dropoffLocation,
+              scheduledTime: new Date(formData.scheduledTime).toISOString(),
+            },
+            ...additionalStops.map((stop, index) => ({
+              stopNumber: index + 2,
+              pickupAddress: stop.pickupLocation,
+              dropoffAddress: stop.dropoffLocation,
+              scheduledTime: new Date(formData.scheduledTime).toISOString(),
+            }))
+          ];
 
-          const firstStop = {
+          const multiStopTrip = {
             ...baseTripData,
-            tripNumber: `${baseTripNumber}-1`,
-            pickupLocation: currentPickup,
-            dropoffLocation: additionalStops[0].location,
+            tripNumber: baseTripNumber,
+            pickupLocation: formData.pickupLocation,
+            dropoffLocation: formData.dropoffLocation,
             scheduledTime: new Date(formData.scheduledTime).toISOString(),
             appointmentTime: formData.appointmentTime ? new Date(formData.appointmentTime).toISOString() : undefined,
-            notes: `${formData.notes ? formData.notes + ' | ' : ''}Multi-stop trip - Stop 1 of ${additionalStops.length + 1}`,
+            notes: `${formData.notes ? formData.notes + ' | ' : ''}Multi-stop trip with ${additionalStops.length + 1} stops`,
+            stops: stopsArray, // JSONB array of stops
           };
-          await addTrip(firstStop);
-
-          for (let i = 0; i < additionalStops.length; i++) {
-            const stopNumber = i + 2;
-            const nextLocation = i < additionalStops.length - 1
-              ? additionalStops[i + 1].location
-              : formData.dropoffLocation;
-
-            const stopTrip = {
-              ...baseTripData,
-              tripNumber: `${baseTripNumber}-${stopNumber}`,
-              pickupLocation: additionalStops[i].location,
-              dropoffLocation: nextLocation,
-              scheduledTime: additionalStops[i].time ? new Date(additionalStops[i].time).toISOString() : new Date(formData.scheduledTime).toISOString(),
-              willCall: false,
-              driverPayout: parseFloat(formData.driverPayout) || 0,
-              appointmentTime: undefined,
-              notes: `${formData.notes ? formData.notes + ' | ' : ''}Multi-stop trip - Stop ${stopNumber} of ${additionalStops.length + 1}`,
-            };
-            await addTrip(stopTrip);
-          }
+          await addTrip(multiStopTrip);
         } else if (isRecurring && recurringDays.length > 0 && recurringEndDate) {
           // Generate recurring trips
           const startDate = new Date(formData.scheduledDate || formData.scheduledTime);
@@ -1103,20 +1054,22 @@ export const TripManagement: React.FC = () => {
       appointmentTime: '',
       actualPickupTime: '',
       actualDropoffTime: '',
-      fare: trip.fare.toString(),
       distance: trip.distance.toString(),
       notes: trip.notes || '',
+      clinicNote: trip.clinicNote || '',
       tripType: trip.tripType,
       journeyType: trip.journeyType || 'one-way',
       serviceLevel: trip.serviceLevel || 'ambulatory',
-      paymentMethod: trip.paymentMethod || 'insurance',
-      billingAddress: trip.billingAddress || '',
       returnTime: '',
       returnPickupLocation: '',
       returnDropoffLocation: '',
       willCall: false,
-      facilityId: trip.clinicId || '',
+      contractorId: trip.clinicId || '',
       classification: trip.classification || '',
+      driverId: '',
+      driverPayout: '',
+      levelOfAssistance: '',
+      patientId: '',
     });
     setIsModalOpen(true);
   };
@@ -1467,19 +1420,6 @@ export const TripManagement: React.FC = () => {
     }
   }, [formData.journeyType, formData.pickupLocation, formData.dropoffLocation]);
 
-  // Auto-calculate mileage when addresses change
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      if (formData.pickupLocation && formData.dropoffLocation) {
-        // Only auto-calc if we have values and aren't already calculating
-        //console.log('Auto-calculating mileage...');
-        calculateMileage(true);
-      }
-    }, 1500); // 1.5s debounce to allow typing/selection
-
-    return () => clearTimeout(timer);
-  }, [formData.pickupLocation, formData.dropoffLocation, formData.journeyType, formData.returnPickupLocation, formData.returnDropoffLocation]);
-
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (openActionMenu) {
@@ -1505,15 +1445,15 @@ export const TripManagement: React.FC = () => {
     safeSelectedTrips.forEach(tripId => {
       assignDriver(tripId, driverId);
     });
-    setSelectedTrips([]);
+    setSelectedTrips(new Set());
     setIsAssignModalOpen(false);
   };
 
   const handleBulkUnassign = () => {
     safeSelectedTrips.forEach(tripId => {
-      updateTrip(tripId, { driverId: undefined, status: 'pending' });
+      updateTrip(tripId, { driverId: null as any, status: 'pending' });
     });
-    setSelectedTrips([]);
+    setSelectedTrips(new Set());
   };
 
   const handleSmartAutoAssign = async () => {
@@ -1590,7 +1530,7 @@ export const TripManagement: React.FC = () => {
         }
       }
 
-      setSelectedTrips([]);
+      setSelectedTrips(new Set());
 
       if (assignedCount > 0 && failedCount === 0) {
         showToast(`Successfully auto-assigned ${assignedCount} trip${assignedCount > 1 ? 's' : ''}`, 'success');
@@ -1644,9 +1584,15 @@ export const TripManagement: React.FC = () => {
   };
 
   const toggleTripSelection = (tripId: string) => {
-    setSelectedTrips(prev =>
-      prev.includes(tripId) ? prev.filter(id => id !== tripId) : [...prev, tripId]
-    );
+    setSelectedTrips(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(tripId)) {
+        newSet.delete(tripId);
+      } else {
+        newSet.add(tripId);
+      }
+      return newSet;
+    });
   };
 
   const toggleAllTrips = () => {
@@ -1686,6 +1632,8 @@ export const TripManagement: React.FC = () => {
     );
   };
 
+  const showDateInTime = filterDate !== 'today';
+
   const EditableTimeField: React.FC<{ tripId: string; field: string; value?: string }> = ({ tripId, field, value }) => {
     const isEditing = editingTimeField?.tripId === tripId && editingTimeField?.field === field;
     const trip = trips.find(t => t.id === tripId);
@@ -1721,7 +1669,7 @@ export const TripManagement: React.FC = () => {
         onClick={() => setEditingTimeField({ tripId, field })}
         className="cursor-pointer hover:bg-gray-100 px-2 py-1 rounded transition-colors"
       >
-        {value ? formatTime(value) : '--:--'}
+        {value ? (showDateInTime ? formatDateTime(value) : formatTime(value)) : '--:--'}
       </div>
     );
   };
@@ -1835,7 +1783,7 @@ export const TripManagement: React.FC = () => {
       // But they should appear with their outbound trip on the same date
       if (trip.willCall && trip.isReturnTrip) {
         // Find the outbound trip (A trip) for this return trip (B trip)
-        const outboundTripNumber = trip.tripNumber.replace(/B$/, 'A');
+        const outboundTripNumber = (trip.tripNumber || '').replace(/B$/, 'A');
         const outboundTrip = trips.find(t => t.tripNumber === outboundTripNumber);
 
         if (outboundTrip && outboundTrip.scheduledTime) {
@@ -2062,12 +2010,20 @@ export const TripManagement: React.FC = () => {
     return '-';
   };
 
-  const getFacilityName = (facilityId?: string) => {
-    if (!facilityId) return '-';
-    // Check facilities (Client Account)
-    const facility = facilities.find(f => f.id === facilityId);
-    if (facility) return facility.name;
+  const getContractorName = (contractorId?: string) => {
+    if (!contractorId) return '-';
+    // Check contractors (Client Account)
+    const contractor = contractors.find(f => f.id === contractorId);
+    if (contractor) return contractor.name;
     return '-';
+  };
+
+  const getContractorDisplay = (contractorId?: string) => {
+    if (!contractorId) return '-';
+    const contractor = contractors.find(f => f.id === contractorId);
+    if (!contractor) return '-';
+    // Show code if available, otherwise full name
+    return (contractor as any).contractorCode || contractor.name;
   };
 
   const renderConfirmationStatus = (trip: any) => {
@@ -2161,61 +2117,54 @@ export const TripManagement: React.FC = () => {
       return 0;
     }
 
-    // For cancelled trips, check driver's cancellation rate
-    if (trip.status === 'cancelled') {
-      return driver.cancellationRate !== undefined && driver.cancellationRate !== null
-        ? driver.cancellationRate
-        : 0;
+    // Drivers don't have cancellation/no-show rates
+    if (trip.status === 'cancelled' || trip.status === 'no-show') {
+      return 0;
     }
 
-    // For no-show trips, check driver's no-show rate
-    if (trip.status === 'no-show') {
-      return driver.noShowRate !== undefined && driver.noShowRate !== null
-        ? driver.noShowRate
-        : 0;
+    // Calculate payout from compact rates JSONB
+    const rates = driver.rates || {};
+    const serviceLevel = trip.serviceLevel || 'ambulatory';
+    const serviceLevelRates = rates[serviceLevel];
+
+    if (!serviceLevelRates || !Array.isArray(serviceLevelRates) || serviceLevelRates.length === 0) {
+      return 0;
     }
 
-    // Calculate payout based on service level and distance using driver's rates
     const distance = trip.distance || 0;
     const roundedMiles = Math.round(distance);
 
-    const serviceLevel = trip.serviceLevel || 'ambulatory';
+    // Parse compact format: [...[from,to,rate], additionalRate]
+    const additionalMileRate = typeof serviceLevelRates[serviceLevelRates.length - 1] === 'number' && !Array.isArray(serviceLevelRates[serviceLevelRates.length - 1])
+      ? serviceLevelRates[serviceLevelRates.length - 1]
+      : 0;
+    const tiers = serviceLevelRates.filter((item: any) => Array.isArray(item));
 
-    // Get driver's rate configuration for the service level
-    let baseRate = 0;
-    let baseMiles = 5;
-    let additionalMileRate = 0;
+    // Find applicable tier
+    let applicableTier = tiers.find((t: number[]) => roundedMiles >= t[0] && roundedMiles <= t[1]);
+    if (!applicableTier && tiers.length > 0) {
+      applicableTier = tiers[tiers.length - 1]; // Use last tier if beyond all
+    }
+    if (!applicableTier) return 0;
 
-    switch (serviceLevel) {
-      case 'ambulatory':
-        baseRate = driver.ambulatoryRate || 0;
-        baseMiles = driver.ambulatoryBaseMiles || 5;
-        additionalMileRate = driver.ambulatoryAdditionalMileRate || 0;
-        break;
-      case 'wheelchair':
-        baseRate = driver.wheelchairRate || 0;
-        baseMiles = driver.wheelchairBaseMiles || 5;
-        additionalMileRate = driver.wheelchairAdditionalMileRate || 0;
-        break;
-      case 'stretcher':
-        baseRate = driver.stretcherRate || 0;
-        baseMiles = driver.stretcherBaseMiles || 5;
-        additionalMileRate = driver.stretcherAdditionalMileRate || 0;
-        break;
+    let payout = applicableTier[2]; // rate
+    const baseMiles = applicableTier[1]; // toMiles of the tier
+
+    // Add additional miles charge if distance exceeds tier
+    if (roundedMiles > baseMiles && additionalMileRate > 0) {
+      payout += (roundedMiles - baseMiles) * additionalMileRate;
     }
 
-    // If no rate configured, return 0
-    if (baseRate === 0) return 0;
-
-    let payout = baseRate;
-
-    // Add additional miles charge if distance exceeds base miles
-    if (roundedMiles > baseMiles) {
-      const additionalMiles = roundedMiles - baseMiles;
-      payout += additionalMiles * additionalMileRate;
+    // Apply deductions
+    const deductions = rates.deductions;
+    if (deductions && Array.isArray(deductions)) {
+      const [rental, insurance, percentage] = deductions;
+      if (rental) payout -= rental;
+      if (insurance) payout -= insurance;
+      if (percentage) payout -= payout * (percentage / 100);
     }
 
-    return Math.round(payout * 100) / 100;
+    return Math.max(0, Math.round(payout * 100) / 100);
   };
 
   const calculateTripCharge = (trip: Trip): number => {
@@ -2228,12 +2177,12 @@ export const TripManagement: React.FC = () => {
     // Otherwise, always calculate from current rates (dynamic pricing)
     let rateSource: any = null;
 
-    // First check facility (Client Account)
-    if (trip.facilityId) {
-      rateSource = facilities.find(f => f.id === trip.facilityId);
+    // First check contractor (Client Account)
+    if (trip.contractorId) {
+      rateSource = contractors.find(f => f.id === trip.contractorId);
     }
 
-    // Fallback to clinic (Transport Company) if no facility
+    // Fallback to clinic (Transport Company) if no contractor
     if (!rateSource && trip.clinicId) {
       rateSource = clinics.find(c => c.id === trip.clinicId);
     }
@@ -2246,26 +2195,40 @@ export const TripManagement: React.FC = () => {
     // Get rate based on status and service level
     let rate = 0;
 
-    // For cancelled trips, use custom cancellation rate if set
-    if (trip.status === 'cancelled' && rateSource.cancellationRate !== undefined && rateSource.cancellationRate !== null) {
-      rate = rateSource.cancellationRate;
+    // Contractors store all rates inside rateTiers JSONB; clinics use flat fields
+    const rt = rateSource.rateTiers;
+    const hasTiers = rt && typeof rt === 'object';
+
+    // For cancelled trips, use cancellation rate
+    if (trip.status === 'cancelled') {
+      const cr = hasTiers ? rt.cancellationRate : rateSource.cancellationRate;
+      if (cr !== undefined && cr !== null) rate = cr;
     }
-    // For no-show trips, use custom no-show rate if set
-    else if (trip.status === 'no-show' && rateSource.noShowRate !== undefined && rateSource.noShowRate !== null) {
-      rate = rateSource.noShowRate;
+    // For no-show trips, use no-show rate
+    else if (trip.status === 'no-show') {
+      const nr = hasTiers ? rt.noShowRate : rateSource.noShowRate;
+      if (nr !== undefined && nr !== null) rate = nr;
     }
-    // Otherwise use service level rate
+    // Otherwise use service level rate (first tier rate for contractors, flat field for clinics)
     else {
-      switch (trip.serviceLevel) {
-        case 'ambulatory':
-          rate = rateSource.ambulatoryRate || 0;
-          break;
-        case 'wheelchair':
-          rate = rateSource.wheelchairRate || 0;
-          break;
-        case 'stretcher':
-          rate = rateSource.stretcherRate || 0;
-          break;
+      if (hasTiers) {
+        const tierKey = trip.serviceLevel as string; // 'ambulatory' | 'wheelchair' | 'stretcher'
+        const tiers = rt[tierKey];
+        if (Array.isArray(tiers) && tiers.length > 0) {
+          rate = tiers[0].rate || 0;
+        }
+      } else {
+        switch (trip.serviceLevel) {
+          case 'ambulatory':
+            rate = rateSource.ambulatoryRate || 0;
+            break;
+          case 'wheelchair':
+            rate = rateSource.wheelchairRate || 0;
+            break;
+          case 'stretcher':
+            rate = rateSource.stretcherRate || 0;
+            break;
+        }
       }
     }
 
@@ -2443,9 +2406,9 @@ export const TripManagement: React.FC = () => {
           const classification = row['Classification'] || 'medical';
           const levelOfAssistance = row['Level of Assistance'] || '';
           const notes = row['Notes'] || '';
-          const facilityNotes = row['Facility Notes'] || '';
+          const contractorNotes = row['Facility Notes'] || '';
 
-          // Use user's facility/clinic ID
+          // Use user's contractor/clinic ID
           const clinicId = user?.clinicId || '';
 
           // Parse pickup date and time
@@ -2486,9 +2449,9 @@ export const TripManagement: React.FC = () => {
             classification: classification as Trip['classification'],
             levelOfAssistance,
             notes,
-            clinicNote: facilityNotes,
+            clinicNote: contractorNotes,
             clinicId,
-            facilityId: user?.clinicId || '', // Facility dispatcher's facility
+            contractorId: user?.clinicId || '', // Contractor dispatcher's contractor
           };
 
           await addTrip(tripData);
@@ -2688,6 +2651,8 @@ export const TripManagement: React.FC = () => {
             >
               <option value="all">All</option>
               <option value="pending">Pending</option>
+              <option value="assigned">Assigned</option>
+              <option value="in-progress">In Progress</option>
               <option value="completed">Completed</option>
               <option value="cancelled">Cancelled</option>
               <option value="no-show">No-Show</option>
@@ -3109,7 +3074,7 @@ export const TripManagement: React.FC = () => {
                 )}
                 {isColumnVisible('fare') && (
                   <th className="px-4 py-3 text-left text-xs font-semibold text-gray-900 uppercase">
-                    Contracted Rate
+                    Contractor
                   </th>
                 )}
                 {isColumnVisible('driverPayout') && (
@@ -3353,20 +3318,9 @@ export const TripManagement: React.FC = () => {
                     )}
                     {isColumnVisible('fare') && (
                       <td className="px-4 py-3">
-                        {(() => {
-                          const charge = calculateTripCharge(trip);
-
-                          return (
-                            <div>
-                              <EditableFareField tripId={trip.id} fare={charge} />
-                              {charge === 0 && trip.clinicId && (
-                                <div className="text-xs text-red-500 mt-0.5">
-                                  No rate set
-                                </div>
-                              )}
-                            </div>
-                          );
-                        })()}
+                        <span className="text-gray-900 font-medium" title={getContractorName(trip.contractorId)}>
+                          {getContractorDisplay(trip.contractorId)}
+                        </span>
                       </td>
                     )}
                     {isColumnVisible('driverPayout') && (
@@ -3381,10 +3335,10 @@ export const TripManagement: React.FC = () => {
                         </span>
                       </td>
                     )}
-                    {isAdmin && isColumnVisible('facility') && (
+                    {isAdmin && isColumnVisible('contractorId') && (
                       <td className="px-4 py-3">
                         <span className="text-gray-900 font-medium">
-                          {getFacilityName(trip.facilityId)}
+                          {getContractorName(trip.contractorId)}
                         </span>
                       </td>
                     )}
@@ -3563,12 +3517,12 @@ export const TripManagement: React.FC = () => {
                         lastName: rider.lastName,
                         customerName: rider.customerName,
                         customerPhone: rider.customerPhone,
-                        customerEmail: rider.customerEmail || '',
+                        customerEmail: '',
                         pickupLocation: rider.pickupLocation || prev.pickupLocation,
                         dropoffLocation: rider.dropoffLocation || prev.dropoffLocation,
                         serviceLevel: rider.serviceLevel || prev.serviceLevel,
                         notes: rider.notes || prev.notes,
-                        patientId: rider.id || '', // Capture Patient ID!
+                        patientId: rider.id || '',
                       }));
                     }}
                   />
@@ -3618,31 +3572,10 @@ export const TripManagement: React.FC = () => {
                 </div>
               ) : (
                 <div className="space-y-4">
-                  {/* Company Row */}
-                  <div>
-                    <label className="block text-sm font-semibold text-gray-700 mb-1">Company <span className="text-red-500">*</span></label>
-                    {isAdmin ? (
-                      <select
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-                        value={patientForm.company}
-                        onChange={e => setPatientForm({ ...patientForm, company: e.target.value })}
-                      >
-                        <option value="">Select Facility/Clinic</option>
-                        {clinics.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                        {facilities.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
-                      </select>
-                    ) : (
-                      <input
-                        type="text"
-                        disabled
-                        value={user?.clinicId ? clinics.find(c => c.id === user.clinicId)?.name || 'My Facility' : 'Admin'}
-                        className="w-full px-3 py-2 border border-gray-200 bg-gray-50 rounded-lg text-gray-500"
-                      />
-                    )}
-                  </div>
-
+                  {/* Simplified New Rider Form - Only essential fields */}
+                  
                   {/* Name Row */}
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
                       <label className="block text-sm font-semibold text-gray-700 mb-1">First Name <span className="text-red-500">*</span></label>
                       <input
@@ -3650,15 +3583,6 @@ export const TripManagement: React.FC = () => {
                         required
                         value={formData.firstName}
                         onChange={e => setFormData({ ...formData, firstName: e.target.value })}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-semibold text-gray-700 mb-1">Middle Name</label>
-                      <input
-                        type="text"
-                        value={patientForm.middleName}
-                        onChange={e => setPatientForm({ ...patientForm, middleName: e.target.value })}
                         className="w-full px-3 py-2 border border-gray-300 rounded-lg"
                       />
                     </div>
@@ -3674,10 +3598,10 @@ export const TripManagement: React.FC = () => {
                     </div>
                   </div>
 
-                  {/* DOB / Age / Gender */}
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  {/* DOB and Phone */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
-                      <label className="block text-sm font-semibold text-gray-700 mb-1">DOB</label>
+                      <label className="block text-sm font-semibold text-gray-700 mb-1">Date of Birth</label>
                       <input
                         type="date"
                         value={patientForm.dateOfBirth}
@@ -3685,33 +3609,6 @@ export const TripManagement: React.FC = () => {
                         className="w-full px-3 py-2 border border-gray-300 rounded-lg"
                       />
                     </div>
-                    <div>
-                      <label className="block text-sm font-semibold text-gray-700 mb-1">Age</label>
-                      <input
-                        type="text"
-                        disabled
-                        placeholder="Age"
-                        className="w-full px-3 py-2 border border-gray-200 bg-gray-50 rounded-lg"
-                      // Simple age calc optional
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-semibold text-gray-700 mb-1">Gender</label>
-                      <select
-                        value={patientForm.gender}
-                        onChange={e => setPatientForm({ ...patientForm, gender: e.target.value })}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-                      >
-                        <option value="">Select</option>
-                        <option value="Male">Male</option>
-                        <option value="Female">Female</option>
-                        <option value="Other">Other</option>
-                      </select>
-                    </div>
-                  </div>
-
-                  {/* Contact */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
                       <label className="block text-sm font-semibold text-gray-700 mb-1">Phone Number <span className="text-red-500">*</span></label>
                       <input
@@ -3722,30 +3619,12 @@ export const TripManagement: React.FC = () => {
                         className="w-full px-3 py-2 border border-gray-300 rounded-lg"
                       />
                     </div>
-                    <div>
-                      <label className="block text-sm font-semibold text-gray-700 mb-1">Mobile Number</label>
-                      <input
-                        type="tel"
-                        value={patientForm.mobileNumber}
-                        onChange={e => setPatientForm({ ...patientForm, mobileNumber: e.target.value })}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-                      />
-                    </div>
                   </div>
 
-                  {/* Account / Status */}
-                  <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                    <div className="col-span-1">
-                      <label className="block text-sm font-semibold text-gray-700 mb-1">Email</label>
-                      <input
-                        type="email"
-                        value={formData.customerEmail}
-                        onChange={e => setFormData({ ...formData, customerEmail: e.target.value })}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-                      />
-                    </div>
-                    <div className="col-span-1">
-                      <label className="block text-sm font-semibold text-gray-700 mb-1">Account Number <span className="text-red-500">*</span></label>
+                  {/* Account Number and Level of Service */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-semibold text-gray-700 mb-1">Account Number</label>
                       <input
                         type="text"
                         value={patientForm.accountNumber}
@@ -3753,35 +3632,8 @@ export const TripManagement: React.FC = () => {
                         className="w-full px-3 py-2 border border-gray-300 rounded-lg"
                       />
                     </div>
-                    <div className="col-span-1">
-                      <label className="block text-sm font-semibold text-gray-700 mb-1">Status</label>
-                      <div className="flex items-center space-x-2 mt-2">
-                        <span className={`px-2 py-1 rounded-full text-xs font-bold ${patientForm.status === 'active' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>
-                          {patientForm.status.toUpperCase()}
-                        </span>
-                        <button type="button" onClick={() => setPatientForm(p => ({ ...p, status: p.status === 'active' ? 'inactive' : 'active' }))} className="text-blue-600 text-xs hover:underline">Toggle</button>
-                      </div>
-                    </div>
-                    <div className="col-span-1">
-                      <label className="block text-sm font-semibold text-gray-700 mb-1">Ride Alone?</label>
-                      <div className="mt-2">
-                        <label className="inline-flex items-center cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={patientForm.rideAlone}
-                            onChange={e => setPatientForm({ ...patientForm, rideAlone: e.target.checked })}
-                            className="sr-only peer"
-                          />
-                          <div className="relative w-11 h-6 bg-gray-200 peer-focus:outline-none ring-0 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
-                        </label>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Service / Notes */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
-                      <label className="block text-sm font-semibold text-gray-700 mb-1">Default Level of Service</label>
+                      <label className="block text-sm font-semibold text-gray-700 mb-1">Level of Service</label>
                       <select
                         value={patientForm.defaultLevelOfService}
                         onChange={e => setPatientForm({ ...patientForm, defaultLevelOfService: e.target.value })}
@@ -3793,54 +3645,19 @@ export const TripManagement: React.FC = () => {
                         <option value="stretcher">Stretcher</option>
                       </select>
                     </div>
-                    <div>
-                      <label className="block text-sm font-semibold text-gray-700 mb-1">Rider Notes</label>
-                      <textarea
-                        rows={2}
-                        value={formData.notes}
-                        onChange={e => setFormData({ ...formData, notes: e.target.value })}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-                        placeholder="Enter Rider Notes"
-                      />
-                    </div>
                   </div>
 
-                  {/* Address Section */}
-                  <div className="pt-2 border-t border-gray-100">
-                    <h4 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">Address</h4>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <div>
-                        <label className="block text-sm font-semibold text-gray-700 mb-1">Address Label <span className="text-red-500">*</span></label>
-                        <input type="text" placeholder="Home, Facility, etc"
-                          value={patientForm.addressLabel}
-                          onChange={e => setPatientForm({ ...patientForm, addressLabel: e.target.value })}
-                          className="w-full px-3 py-2 border border-gray-300 rounded-lg" />
-                      </div>
-                      <div>
-                        <label className="block text-sm font-semibold text-gray-700 mb-1">Landmark</label>
-                        <input type="text" placeholder="Behing the gate..."
-                          value={patientForm.landmark}
-                          onChange={e => setPatientForm({ ...patientForm, landmark: e.target.value })}
-                          className="w-full px-3 py-2 border border-gray-300 rounded-lg" />
-                      </div>
-                      <div className="md:col-span-2">
-                        <label className="block text-sm font-semibold text-gray-700 mb-1">Address <span className="text-red-500">*</span></label>
-                        <AddressAutocomplete
-                          label=""
-                          value={formData.pickupLocation}
-                          onChange={(val) => setFormData(prev => ({ ...prev, pickupLocation: val }))}
-                        />
-                      </div>
-                      <div className="md:col-span-2">
-                        <label className="block text-sm font-semibold text-gray-700 mb-1">Address Line 2</label>
-                        <input type="text"
-                          value={patientForm.addressLine2}
-                          onChange={e => setPatientForm({ ...patientForm, addressLine2: e.target.value })}
-                          className="w-full px-3 py-2 border border-gray-300 rounded-lg" />
-                      </div>
-                    </div>
+                  {/* Rider Notes */}
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-1">Rider Notes</label>
+                    <textarea
+                      rows={2}
+                      value={formData.notes}
+                      onChange={e => setFormData({ ...formData, notes: e.target.value })}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                      placeholder="Enter any notes about this rider..."
+                    />
                   </div>
-
                 </div>
               )}
             </div>
@@ -3881,8 +3698,24 @@ export const TripManagement: React.FC = () => {
                 </div>
               </div>
 
-              {/* Row 1: Assistance, Classification, Clinic Code */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {/* Row 1: Contractor, Assistance, Classification, Clinic Code */}
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-2">
+                    Client Account <span className="text-red-500">*</span>
+                  </label>
+                  <select
+                    value={formData.contractorId}
+                    onChange={e => setFormData({ ...formData, contractorId: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-gray-50"
+                  >
+                    <option value="">Select Client Account</option>
+                    {contractors.map(c => (
+                      <option key={c.id} value={c.id}>{c.name}</option>
+                    ))}
+                  </select>
+                </div>
+
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-2">
                     Assistance Level
@@ -4193,25 +4026,30 @@ export const TripManagement: React.FC = () => {
             {formData.journeyType === 'multi-stop' && (
               <div className="border-t pt-6">
                 <div className="flex items-center justify-between mb-4">
-                  <h3 className="text-lg font-semibold text-gray-900">Additional Stops</h3>
+                  <h3 className="text-lg font-semibold text-gray-900">Additional Trips</h3>
                   <button
                     type="button"
-                    onClick={() => setAdditionalStops([...additionalStops, { location: '', time: '' }])}
-                    className="flex items-center space-x-2 px-4 py-2 bg-blue-600 text-white rounded-lg font-semibold hover:bg-blue-700 transition-colors text-sm"
+                    onClick={() => setAdditionalStops([...additionalStops, { pickupLocation: '', dropoffLocation: '' }])}
+                    className="flex items-center space-x-2 px-4 py-2 bg-green-600 text-white rounded-lg font-semibold hover:bg-green-700 transition-colors text-sm"
                   >
                     <Plus className="w-4 h-4" />
                     <span>Add Stop</span>
                   </button>
                 </div>
 
-                {additionalStops.length === 0 && (
-                  <p className="text-sm text-gray-600 mb-4">Click "Add Stop" to add intermediate stops for this multi-stop journey.</p>
-                )}
+                <p className="text-sm text-gray-600 mb-4">
+                  The first trip uses the Pickup and Drop-off locations above. Add additional stops below - each stop has its own pickup and drop-off.
+                </p>
 
                 {additionalStops.map((stop, index) => (
-                  <div key={index} className="mb-4 p-4 border border-gray-200 rounded-lg bg-gray-50">
+                  <div key={index} className="mb-4 p-4 border border-blue-200 rounded-lg bg-blue-50">
                     <div className="flex items-center justify-between mb-3">
-                      <h4 className="text-sm font-semibold text-gray-900">Stop {index + 1}</h4>
+                      <div className="flex items-center gap-2">
+                        <span className="w-6 h-6 bg-blue-600 text-white rounded-full flex items-center justify-center text-xs font-bold">
+                          {index + 2}
+                        </span>
+                        <h4 className="text-sm font-semibold text-gray-900">Stop {index + 2}</h4>
+                      </div>
                       <button
                         type="button"
                         onClick={() => setAdditionalStops(additionalStops.filter((_, i) => i !== index))}
@@ -4220,34 +4058,31 @@ export const TripManagement: React.FC = () => {
                         <Trash2 className="w-4 h-4" />
                       </button>
                     </div>
-                    <div className="space-y-3">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <AddressAutocomplete
-                        label={`Stop ${index + 1} Location`}
-                        value={stop.location}
+                        label="Pickup Location"
+                        value={stop.pickupLocation}
                         onChange={(value) => {
                           const updated = [...additionalStops];
-                          updated[index].location = value;
+                          updated[index].pickupLocation = value;
                           setAdditionalStops(updated);
                         }}
-                        placeholder="Enter stop address"
+                        placeholder="Enter pickup address"
                         required
                         icon={<MapPin className="w-5 h-5" />}
                       />
-                      <div>
-                        <label className="block text-sm font-semibold text-gray-700 mb-2">
-                          Estimated Arrival Time (Optional)
-                        </label>
-                        <input
-                          type="datetime-local"
-                          value={stop.time}
-                          onChange={(e) => {
-                            const updated = [...additionalStops];
-                            updated[index].time = e.target.value;
-                            setAdditionalStops(updated);
-                          }}
-                          className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                        />
-                      </div>
+                      <AddressAutocomplete
+                        label="Drop-off Location"
+                        value={stop.dropoffLocation}
+                        onChange={(value) => {
+                          const updated = [...additionalStops];
+                          updated[index].dropoffLocation = value;
+                          setAdditionalStops(updated);
+                        }}
+                        placeholder="Enter drop-off address"
+                        required
+                        icon={<Navigation className="w-5 h-5" />}
+                      />
                     </div>
                   </div>
                 ))}
@@ -4349,25 +4184,6 @@ export const TripManagement: React.FC = () => {
                   />
                 </div>
               </div>
-
-              {rateBreakdown && (
-                <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
-                  <h4 className="text-sm font-semibold text-blue-900 mb-2">Auto-Calculated Rates</h4>
-                  <div className="space-y-1.5 text-xs">
-                    <div>
-                      <span className="font-medium text-blue-800">Facility Rate:</span>
-                      <span className="text-blue-700 ml-2">{rateBreakdown.facility}</span>
-                    </div>
-                    <div>
-                      <span className="font-medium text-blue-800">Driver Payout:</span>
-                      <span className="text-blue-700 ml-2">{rateBreakdown.driver}</span>
-                    </div>
-                  </div>
-                  <p className="text-xs text-blue-600 mt-2">
-                    Rates calculated based on service level, distance, and configured rate tiers. You can manually adjust if needed.
-                  </p>
-                </div>
-              )}
 
               <div>
                 <label className="block text-sm font-semibold text-gray-700 mb-2">

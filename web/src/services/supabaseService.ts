@@ -1,4 +1,4 @@
-import { supabase } from '../lib/supabase';
+import * as api from './api';
 
 export interface DocumentSubmission {
   id: string;
@@ -87,292 +87,123 @@ export interface DocumentExpiryAlert {
 // Document Submission Service
 export const documentSubmissionService = {
   async getAll() {
-    const { data, error } = await supabase
-      .from('document_submissions')
-      .select('*')
-      .order('submission_date', { ascending: false });
-
-    if (error) throw error;
-    return data as DocumentSubmission[];
+    const result = await api.getDocumentSubmissions();
+    return (result.data || []) as DocumentSubmission[];
   },
 
   async getByDriver(driverId: string) {
-    const { data, error } = await supabase
-      .from('document_submissions')
-      .select('*')
-      .eq('driver_id', driverId)
-      .order('submission_date', { ascending: false });
-
-    if (error) throw error;
-    return data as DocumentSubmission[];
+    const result = await api.getDocumentSubmissions(driverId);
+    return (result.data || []) as DocumentSubmission[];
   },
 
   async getByStatus(status: 'pending' | 'approved' | 'rejected') {
-    const { data, error } = await supabase
-      .from('document_submissions')
-      .select('*')
-      .eq('status', status)
-      .order('submission_date', { ascending: false });
-
-    if (error) throw error;
-    return data as DocumentSubmission[];
+    const result = await api.getDocumentSubmissions(undefined, status);
+    return (result.data || []) as DocumentSubmission[];
   },
 
   async create(submission: Omit<DocumentSubmission, 'id' | 'submission_date' | 'version'>) {
-    const { data, error } = await supabase
-      .from('document_submissions')
-      .insert([submission])
-      .select()
-      .single();
-
-    if (error) throw error;
-    return data as DocumentSubmission;
+    const result = await api.createDocumentSubmission(submission);
+    return result.data as DocumentSubmission;
   },
 
   async approve(submissionId: string, reviewerId: string, notes?: string) {
-    const { data, error } = await supabase
-      .from('document_submissions')
-      .update({
-        status: 'approved',
-        reviewed_by: reviewerId,
-        reviewed_at: new Date().toISOString(),
-        review_notes: notes
-      })
-      .eq('id', submissionId)
-      .select()
-      .single();
-
-    if (error) throw error;
-
-    // Log review
-    await supabase
-      .from('document_reviews')
-      .insert([{
-        submission_id: submissionId,
-        reviewer_id: reviewerId,
-        action: 'approved',
-        notes: notes
-      }]);
-
-    return data as DocumentSubmission;
+    const result = await api.approveDocumentSubmission(submissionId, reviewerId, notes);
+    return result.data as DocumentSubmission;
   },
 
   async reject(submissionId: string, reviewerId: string, reason: string) {
-    const { data, error } = await supabase
-      .from('document_submissions')
-      .update({
-        status: 'rejected',
-        reviewed_by: reviewerId,
-        reviewed_at: new Date().toISOString(),
-        rejection_reason: reason
-      })
-      .eq('id', submissionId)
-      .select()
-      .single();
-
-    if (error) throw error;
-
-    // Log review
-    await supabase
-      .from('document_reviews')
-      .insert([{
-        submission_id: submissionId,
-        reviewer_id: reviewerId,
-        action: 'rejected',
-        notes: reason
-      }]);
-
-    return data as DocumentSubmission;
+    const result = await api.rejectDocumentSubmission(submissionId, reviewerId, reason);
+    return result.data as DocumentSubmission;
   }
 };
 
 // System Settings Service
 export const systemSettingsService = {
   async getAll() {
-    const { data, error } = await supabase
-      .from('system_settings')
-      .select('*');
-
-    if (error) throw error;
-    return data as SystemSetting[];
+    const result = await api.getSystemSettings();
+    return (Array.isArray(result.data) ? result.data : []) as SystemSetting[];
   },
 
   async getByCategory(category: SystemSetting['category']) {
-    const { data, error } = await supabase
-      .from('system_settings')
-      .select('*')
-      .eq('category', category);
-
-    if (error) throw error;
-    return data as SystemSetting[];
+    const result = await api.getSystemSettings(category);
+    return (Array.isArray(result.data) ? result.data : []) as SystemSetting[];
   },
 
   async getByKey(key: string) {
-    const { data, error } = await supabase
-      .from('system_settings')
-      .select('*')
-      .eq('setting_key', key)
-      .maybeSingle();
-
-    if (error) throw error;
-    return data as SystemSetting | null;
+    const result = await api.getSystemSettings(undefined, key);
+    return (result.data || null) as SystemSetting | null;
   },
 
   async upsert(key: string, value: any, category: SystemSetting['category'], userId?: string) {
-    const { data, error } = await supabase
-      .from('system_settings')
-      .upsert({
-        setting_key: key,
-        setting_value: value,
-        category: category,
-        updated_by: userId
-      }, {
-        onConflict: 'setting_key'
-      })
-      .select()
-      .single();
-
-    if (error) throw error;
-    return data as SystemSetting;
+    const result = await api.upsertSystemSetting(key, value, category, userId);
+    return result.data as SystemSetting;
   },
 
   async delete(key: string) {
-    const { error } = await supabase
-      .from('system_settings')
-      .delete()
-      .eq('setting_key', key);
-
-    if (error) throw error;
+    await api.deleteSystemSetting(key);
   }
 };
 
 // Notification Settings Service
 export const notificationSettingsService = {
   async getByUser(userId: string) {
-    const { data, error } = await supabase
-      .from('notification_settings')
-      .select('*')
-      .eq('user_id', userId)
-      .maybeSingle();
-
-    if (error) throw error;
-    return data as NotificationSetting | null;
+    const result = await api.getNotificationSettings(userId);
+    return (result.data || null) as NotificationSetting | null;
   },
 
   async getByDriver(driverId: string) {
-    const { data, error } = await supabase
-      .from('notification_settings')
-      .select('*')
-      .eq('driver_id', driverId)
-      .maybeSingle();
-
-    if (error) throw error;
-    return data as NotificationSetting | null;
+    const result = await api.getNotificationSettings(undefined, driverId);
+    return (result.data || null) as NotificationSetting | null;
   },
 
   async upsert(settings: Partial<NotificationSetting>) {
-    const { data, error } = await supabase
-      .from('notification_settings')
-      .upsert(settings)
-      .select()
-      .single();
-
-    if (error) throw error;
-    return data as NotificationSetting;
+    const result = await api.upsertNotificationSettings(settings as Record<string, any>);
+    return result.data as NotificationSetting;
   }
 };
 
 // Reminder Schedule Service
 export const reminderScheduleService = {
   async getAll() {
-    const { data, error } = await supabase
-      .from('reminder_schedules')
-      .select('*')
-      .order('days_before_expiry', { ascending: false });
-
-    if (error) throw error;
-    return data as ReminderSchedule[];
+    const result = await api.getReminderSchedules();
+    return (result.data || []) as ReminderSchedule[];
   },
 
   async getEnabled() {
-    const { data, error } = await supabase
-      .from('reminder_schedules')
-      .select('*')
-      .eq('is_enabled', true)
-      .order('days_before_expiry', { ascending: false });
-
-    if (error) throw error;
-    return data as ReminderSchedule[];
+    const result = await api.getReminderSchedules(true);
+    return (result.data || []) as ReminderSchedule[];
   },
 
   async create(schedule: Omit<ReminderSchedule, 'id' | 'created_at' | 'updated_at'>) {
-    const { data, error } = await supabase
-      .from('reminder_schedules')
-      .insert([schedule])
-      .select()
-      .single();
-
-    if (error) throw error;
-    return data as ReminderSchedule;
+    const result = await api.createReminderSchedule(schedule as Record<string, any>);
+    return result.data as ReminderSchedule;
   },
 
   async update(id: string, updates: Partial<ReminderSchedule>) {
-    const { data, error } = await supabase
-      .from('reminder_schedules')
-      .update(updates)
-      .eq('id', id)
-      .select()
-      .single();
-
-    if (error) throw error;
-    return data as ReminderSchedule;
+    const result = await api.updateReminderSchedule(id, updates as Record<string, any>);
+    return result.data as ReminderSchedule;
   },
 
   async delete(id: string) {
-    const { error } = await supabase
-      .from('reminder_schedules')
-      .delete()
-      .eq('id', id);
-
-    if (error) throw error;
+    await api.deleteReminderSchedule(id);
   }
 };
 
 // Compliance Metrics Service
 export const complianceMetricsService = {
   async getLatest() {
-    const { data, error } = await supabase
-      .from('compliance_metrics')
-      .select('*')
-      .order('metric_date', { ascending: false })
-      .limit(1)
-      .maybeSingle();
-
-    if (error) throw error;
-    return data as ComplianceMetric | null;
+    const result = await api.getComplianceMetrics({ latest: true });
+    return (result.data || null) as ComplianceMetric | null;
   },
 
   async getByDateRange(startDate: string, endDate: string) {
-    const { data, error } = await supabase
-      .from('compliance_metrics')
-      .select('*')
-      .gte('metric_date', startDate)
-      .lte('metric_date', endDate)
-      .order('metric_date', { ascending: true });
-
-    if (error) throw error;
-    return data as ComplianceMetric[];
+    const result = await api.getComplianceMetrics({ startDate, endDate });
+    return (Array.isArray(result.data) ? result.data : []) as ComplianceMetric[];
   },
 
   async create(metric: Omit<ComplianceMetric, 'id' | 'created_at'>) {
-    const { data, error } = await supabase
-      .from('compliance_metrics')
-      .insert([metric])
-      .select()
-      .single();
-
-    if (error) throw error;
-    return data as ComplianceMetric;
+    const result = await api.createComplianceMetric(metric as Record<string, any>);
+    return result.data as ComplianceMetric;
   },
 
   async calculateAndStore(date: string, drivers: any[]) {
@@ -434,36 +265,18 @@ export const complianceMetricsService = {
 // Document Expiry Alerts Service
 export const documentExpiryAlertsService = {
   async getActive() {
-    const { data, error } = await supabase
-      .from('document_expiry_alerts')
-      .select('*')
-      .eq('alert_sent', false)
-      .order('alert_date', { ascending: true });
-
-    if (error) throw error;
-    return data as DocumentExpiryAlert[];
+    const result = await api.getDocumentExpiryAlerts(undefined, true);
+    return (result.data || []) as DocumentExpiryAlert[];
   },
 
   async getByDriver(driverId: string) {
-    const { data, error } = await supabase
-      .from('document_expiry_alerts')
-      .select('*')
-      .eq('driver_id', driverId)
-      .order('alert_date', { ascending: false });
-
-    if (error) throw error;
-    return data as DocumentExpiryAlert[];
+    const result = await api.getDocumentExpiryAlerts(driverId);
+    return (result.data || []) as DocumentExpiryAlert[];
   },
 
   async create(alert: Omit<DocumentExpiryAlert, 'id' | 'created_at'>) {
-    const { data, error } = await supabase
-      .from('document_expiry_alerts')
-      .insert([alert])
-      .select()
-      .single();
-
-    if (error) throw error;
-    return data as DocumentExpiryAlert;
+    const result = await api.createDocumentExpiryAlert(alert as Record<string, any>);
+    return result.data as DocumentExpiryAlert;
   },
 
   async markSent(alertId: string, channel: 'email' | 'sms' | 'push') {
@@ -471,85 +284,42 @@ export const documentExpiryAlertsService = {
     if (channel === 'email') updates.email_sent = true;
     if (channel === 'sms') updates.sms_sent = true;
     if (channel === 'push') updates.push_sent = true;
-
-    const { data, error } = await supabase
-      .from('document_expiry_alerts')
-      .update(updates)
-      .eq('id', alertId)
-      .select()
-      .single();
-
-    if (error) throw error;
-    return data as DocumentExpiryAlert;
+    const result = await api.updateDocumentExpiryAlert(alertId, updates);
+    return result.data as DocumentExpiryAlert;
   },
 
   async acknowledge(alertId: string) {
-    const { data, error } = await supabase
-      .from('document_expiry_alerts')
-      .update({
-        acknowledged: true,
-        acknowledged_at: new Date().toISOString()
-      })
-      .eq('id', alertId)
-      .select()
-      .single();
-
-    if (error) throw error;
-    return data as DocumentExpiryAlert;
+    const result = await api.updateDocumentExpiryAlert(alertId, {
+      acknowledged: true,
+      acknowledged_at: new Date().toISOString()
+    });
+    return result.data as DocumentExpiryAlert;
   },
 
   async snooze(alertId: string, days: number) {
     const snoozeUntil = new Date();
     snoozeUntil.setDate(snoozeUntil.getDate() + days);
-
-    const { data, error } = await supabase
-      .from('document_expiry_alerts')
-      .update({
-        snoozed_until: snoozeUntil.toISOString()
-      })
-      .eq('id', alertId)
-      .select()
-      .single();
-
-    if (error) throw error;
-    return data as DocumentExpiryAlert;
+    const result = await api.updateDocumentExpiryAlert(alertId, {
+      snoozed_until: snoozeUntil.toISOString()
+    });
+    return result.data as DocumentExpiryAlert;
   }
 };
 
 // Activity Log Service
 export const activityLogService = {
-  async getRecent(limit: number = 50) {
-    const { data, error } = await supabase
-      .from('activity_log')
-      .select('*')
-      .order('created_at', { ascending: false })
-      .limit(limit);
-
-    if (error) throw error;
-    return data;
+  async getRecent(_limit: number = 50) {
+    const result = await api.getActivityLogs();
+    return result.data || [];
   },
 
-  async getByUser(userId: string, limit: number = 50) {
-    const { data, error } = await supabase
-      .from('activity_log')
-      .select('*')
-      .eq('user_id', userId)
-      .order('created_at', { ascending: false })
-      .limit(limit);
-
-    if (error) throw error;
-    return data;
+  async getByUser(userId: string, _limit: number = 50) {
+    const result = await api.getActivityLogs({ userId });
+    return result.data || [];
   },
 
   async getByEntity(entityType: string, entityId: string) {
-    const { data, error } = await supabase
-      .from('activity_log')
-      .select('*')
-      .eq('entity_type', entityType)
-      .eq('entity_id', entityId)
-      .order('created_at', { ascending: false });
-
-    if (error) throw error;
-    return data;
+    const result = await api.getActivityLogs({ entityType, entityId });
+    return result.data || [];
   }
 };

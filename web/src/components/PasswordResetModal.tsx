@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Key, Copy, Send, Check, AlertCircle } from 'lucide-react';
 import { Modal } from './Modal';
 import { generateTemporaryPassword } from '../utils/passwordGenerator';
-import { supabase } from '../lib/supabase';
+import * as api from '../services/api';
 
 interface PasswordResetModalProps {
   isOpen: boolean;
@@ -56,85 +56,25 @@ export const PasswordResetModal: React.FC<PasswordResetModalProps> = ({
     try {
       console.log('Attempting password reset for:', userEmail);
 
-      // First, try to reset password
-      const { data: resetData, error: resetError } = await supabase.functions.invoke('reset-password', {
-        body: {
-          email: userEmail,
-          userType,
-          temporaryPassword,
-          sendSMS: sendSMS && !!userPhone,
-        },
-      });
+      // Backend handles the full flow: reset, auto-create if needed, retry
+      const result = await api.resetPasswordByEmail(
+        userEmail,
+        userType,
+        temporaryPassword,
+        sendSMS && !!userPhone,
+      );
 
-      console.log('Reset response:', resetData, resetError);
-
-      // If user not found, create auth account automatically
-      if (resetData && !resetData.success && resetData.error?.includes('not found')) {
-        console.log('User not found, creating auth account...');
-        setError('Creating auth account, please wait...');
-
-        const { data: createData, error: createError } = await supabase.functions.invoke('create-auth-account', {
-          body: {
-            email: userEmail,
-            userType,
-          },
-        });
-
-        console.log('Create auth response:', createData, createError);
-
-        if (createError) {
-          setError(`Failed to create auth account: ${createError.message}`);
-          return;
-        }
-
-        if (!createData?.success) {
-          setError(createData?.error || 'Failed to create auth account');
-          return;
-        }
-
-        // Auth account created, now reset password again
-        console.log('Auth account created, retrying password reset...');
-        const { data: retryData, error: retryError } = await supabase.functions.invoke('reset-password', {
-          body: {
-            email: userEmail,
-            userType,
-            temporaryPassword,
-            sendSMS: sendSMS && !!userPhone,
-          },
-        });
-
-        if (retryError) {
-          setError(`Password reset failed: ${retryError.message}`);
-          return;
-        }
-
-        if (retryData?.success) {
-          setSuccess(true);
-          if (retryData.smsError && sendSMS) {
-            console.warn('SMS error:', retryData.smsError);
-          }
-          setTimeout(() => {
-            onSuccess?.();
-            handleClose();
-          }, 2000);
-        } else {
-          setError(retryData?.error || 'Password reset failed after creating auth account');
-        }
-      } else if (resetError) {
-        setError(`Network error: ${resetError.message}`);
-      } else if (resetData?.success) {
+      if (result.success) {
         setSuccess(true);
-        if (resetData.smsError && sendSMS) {
-          console.warn('SMS error:', resetData.smsError);
+        if (result.smsError && sendSMS) {
+          console.warn('SMS error:', result.smsError);
         }
         setTimeout(() => {
           onSuccess?.();
           handleClose();
         }, 2000);
       } else {
-        const errorMsg = resetData?.error || resetData?.details || 'Failed to reset password';
-        setError(errorMsg);
-        console.error('Reset error:', resetData);
+        setError(result.error || 'Failed to reset password');
       }
     } catch (err: any) {
       console.error('Exception:', err);

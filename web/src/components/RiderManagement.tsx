@@ -1,14 +1,13 @@
 import React, { useState } from 'react';
-import { Plus, Edit2, Trash2, User, Search, Phone, MapPin, FileText } from 'lucide-react';
+import { Plus, Edit2, Trash2, User, Search, Phone, FileText } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { useAuth } from '../context/AuthContext';
 import { Modal } from './Modal';
 import { Patient } from '../types';
 import Toast, { ToastType } from './Toast';
-import { AddressAutocomplete } from './AddressAutocomplete';
 
 export const RiderManagement: React.FC = () => {
-    const { patients, isLoading, addPatient, updatePatient, deletePatient, clinics, facilities } = useApp();
+    const { patients, isLoading, addPatient, updatePatient, deletePatient } = useApp();
     const { user, isAdmin } = useAuth();
 
     const [searchTerm, setSearchTerm] = useState('');
@@ -16,34 +15,26 @@ export const RiderManagement: React.FC = () => {
     const [editingRider, setEditingRider] = useState<Patient | null>(null);
     const [toast, setToast] = useState<{ message: string; type: ToastType } | null>(null);
 
-    // Form State
+    // Simplified Form State - Only required fields
     const [formData, setFormData] = useState({
         firstName: '',
-        middleName: '',
         lastName: '',
         dateOfBirth: '',
-        gender: '',
         phone: '',
-        mobileNumber: '',
-        email: '',
         accountNumber: '',
-        status: 'active',
-        rideAlone: false,
         serviceLevel: '',
-        notes: '',
-        addressLabel: '',
-        landmark: '',
-        address: '',
-        addressLine2: '',
-        company: '',
+        notes: ''
     });
 
     const resetForm = () => {
         setFormData({
-            firstName: '', middleName: '', lastName: '', dateOfBirth: '', gender: '',
-            phone: '', mobileNumber: '', email: '', accountNumber: '', status: 'active',
-            rideAlone: false, serviceLevel: '', notes: '', addressLabel: '', landmark: '',
-            address: '', addressLine2: '', company: user?.clinicId || ''
+            firstName: '',
+            lastName: '',
+            dateOfBirth: '',
+            phone: '',
+            accountNumber: '',
+            serviceLevel: '',
+            notes: ''
         });
         setEditingRider(null);
     };
@@ -53,23 +44,12 @@ export const RiderManagement: React.FC = () => {
             setEditingRider(rider);
             setFormData({
                 firstName: rider.firstName,
-                middleName: '', // Not in schema, leave empty
                 lastName: rider.lastName,
                 dateOfBirth: rider.dateOfBirth || '',
-                gender: '', // Not in schema
                 phone: rider.phone,
-                mobileNumber: '',
-                email: rider.email || '',
-                accountNumber: '', // Not in schema
-                status: rider.isActive ? 'active' : 'inactive',
-                rideAlone: false, // Not in schema
-                serviceLevel: rider.mobilityType,
-                notes: rider.notes || '',
-                addressLabel: '',
-                landmark: '',
-                address: rider.address,
-                addressLine2: '',
-                company: rider.clinicId || '',
+                accountNumber: rider.accountNumber || '',
+                serviceLevel: rider.serviceLevel || '',
+                notes: rider.notes || ''
             });
         } else {
             resetForm();
@@ -85,17 +65,10 @@ export const RiderManagement: React.FC = () => {
                 lastName: formData.lastName,
                 dateOfBirth: formData.dateOfBirth || undefined,
                 phone: formData.phone,
-                email: formData.email,
-                address: formData.address,
-                city: '', // Placeholder
-                state: '', // Placeholder
-                zipCode: '', // Placeholder
+                accountNumber: formData.accountNumber,
+                serviceLevel: (formData.serviceLevel || 'ambulatory') as Patient['serviceLevel'],
                 notes: formData.notes,
-                mobilityType: formData.serviceLevel as any || 'ambulatory',
-                clinicId: formData.company || (isAdmin ? undefined : user?.clinicId),
-                // Note: status, middleName, gender etc are not in core Patient type yet
-                // but we preserve the form fields for UI consistency
-                isActive: formData.status === 'active',
+                clinicId: isAdmin ? undefined : user?.clinicId,
             };
 
             if (editingRider) {
@@ -124,13 +97,13 @@ export const RiderManagement: React.FC = () => {
 
         if (isAdmin) return true;
 
-        // Facility Dispatcher (has clinicId) -> See all riders in facility
+        // Contractor Dispatcher (has clinicId) -> See all riders in contractor
         if (user?.clinicId) {
             return rider.clinicId === user.clinicId;
         }
 
-        // Regular Dispatcher -> See own riders (created by or assigned to)
-        return rider.createdBy === user?.id || rider.dispatcherId === user?.id;
+        // Regular Dispatcher -> See all riders in their clinic
+        return true;
     });
 
     return (
@@ -209,10 +182,6 @@ export const RiderManagement: React.FC = () => {
                             </div>
 
                             <div className="space-y-2 text-sm text-gray-600">
-                                <div className="flex items-start">
-                                    <MapPin className="w-4 h-4 mr-2 mt-0.5 shrink-0 text-gray-400" />
-                                    <span>{rider.address}, {rider.city}, {rider.state}</span>
-                                </div>
                                 {rider.notes && (
                                     <div className="flex items-start">
                                         <FileText className="w-4 h-4 mr-2 mt-0.5 shrink-0 text-gray-400" />
@@ -220,12 +189,17 @@ export const RiderManagement: React.FC = () => {
                                     </div>
                                 )}
                                 <div className="pt-3 flex flex-wrap gap-2">
-                                    <span className={`px-2 py-1 rounded-full text-xs font-medium ${rider.mobilityType === 'wheelchair' ? 'bg-purple-100 text-purple-700' :
-                                        rider.mobilityType === 'stretcher' ? 'bg-red-100 text-red-700' :
+                                    <span className={`px-2 py-1 rounded-full text-xs font-medium ${rider.serviceLevel === 'wheelchair' ? 'bg-purple-100 text-purple-700' :
+                                        rider.serviceLevel === 'stretcher' ? 'bg-red-100 text-red-700' :
                                             'bg-green-100 text-green-700'
                                         }`}>
-                                        {(rider.mobilityType || 'ambulatory').charAt(0).toUpperCase() + (rider.mobilityType || 'ambulatory').slice(1)}
+                                        {(rider.serviceLevel || 'ambulatory').charAt(0).toUpperCase() + (rider.serviceLevel || 'ambulatory').slice(1)}
                                     </span>
+                                    {rider.accountNumber && (
+                                        <span className="px-2 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-700">
+                                            #{rider.accountNumber}
+                                        </span>
+                                    )}
                                 </div>
                             </div>
                         </div>
@@ -247,31 +221,8 @@ export const RiderManagement: React.FC = () => {
                 size="lg"
             >
                 <form onSubmit={handleSubmit} className="space-y-4">
-                    {/* Company Row */}
-                    <div>
-                        <label className="block text-sm font-semibold text-gray-700 mb-1">Company (Facility) <span className="text-red-500">*</span></label>
-                        {isAdmin ? (
-                            <select
-                                className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-                                value={formData.company}
-                                onChange={e => setFormData({ ...formData, company: e.target.value })}
-                            >
-                                <option value="">Select Facility</option>
-                                {clinics.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                                {facilities.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
-                            </select>
-                        ) : (
-                            <input
-                                type="text"
-                                disabled
-                                value={user?.clinicId ? clinics.find(c => c.id === user.clinicId)?.name || 'My Facility' : 'Admin'}
-                                className="w-full px-3 py-2 border border-gray-200 bg-gray-50 rounded-lg text-gray-500"
-                            />
-                        )}
-                    </div>
-
                     {/* Name Row */}
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div>
                             <label className="block text-sm font-semibold text-gray-700 mb-1">First Name <span className="text-red-500">*</span></label>
                             <input
@@ -279,16 +230,7 @@ export const RiderManagement: React.FC = () => {
                                 required
                                 value={formData.firstName}
                                 onChange={e => setFormData({ ...formData, firstName: e.target.value })}
-                                className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-                            />
-                        </div>
-                        <div>
-                            <label className="block text-sm font-semibold text-gray-700 mb-1">Middle Name</label>
-                            <input
-                                type="text"
-                                value={formData.middleName}
-                                onChange={e => setFormData({ ...formData, middleName: e.target.value })}
-                                className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                             />
                         </div>
                         <div>
@@ -298,48 +240,22 @@ export const RiderManagement: React.FC = () => {
                                 required
                                 value={formData.lastName}
                                 onChange={e => setFormData({ ...formData, lastName: e.target.value })}
-                                className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                             />
                         </div>
                     </div>
 
-                    {/* DOB / Age / Gender */}
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    {/* DOB and Phone */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div>
-                            <label className="block text-sm font-semibold text-gray-700 mb-1">DOB</label>
+                            <label className="block text-sm font-semibold text-gray-700 mb-1">Date of Birth</label>
                             <input
                                 type="date"
                                 value={formData.dateOfBirth}
                                 onChange={e => setFormData({ ...formData, dateOfBirth: e.target.value })}
-                                className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                             />
                         </div>
-                        <div>
-                            <label className="block text-sm font-semibold text-gray-700 mb-1">Age</label>
-                            <input
-                                type="text"
-                                disabled
-                                placeholder="Age"
-                                className="w-full px-3 py-2 border border-gray-200 bg-gray-50 rounded-lg"
-                            />
-                        </div>
-                        <div>
-                            <label className="block text-sm font-semibold text-gray-700 mb-1">Gender</label>
-                            <select
-                                value={formData.gender}
-                                onChange={e => setFormData({ ...formData, gender: e.target.value })}
-                                className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-                            >
-                                <option value="">Select</option>
-                                <option value="Male">Male</option>
-                                <option value="Female">Female</option>
-                                <option value="Other">Other</option>
-                            </select>
-                        </div>
-                    </div>
-
-                    {/* Contact */}
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div>
                             <label className="block text-sm font-semibold text-gray-700 mb-1">Phone Number <span className="text-red-500">*</span></label>
                             <input
@@ -347,73 +263,28 @@ export const RiderManagement: React.FC = () => {
                                 required
                                 value={formData.phone}
                                 onChange={e => setFormData({ ...formData, phone: e.target.value })}
-                                className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-                            />
-                        </div>
-                        <div>
-                            <label className="block text-sm font-semibold text-gray-700 mb-1">Mobile Number</label>
-                            <input
-                                type="tel"
-                                value={formData.mobileNumber}
-                                onChange={e => setFormData({ ...formData, mobileNumber: e.target.value })}
-                                className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                             />
                         </div>
                     </div>
 
-                    {/* Account / Status */}
-                    <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                        <div className="col-span-1">
-                            <label className="block text-sm font-semibold text-gray-700 mb-1">Email</label>
-                            <input
-                                type="email"
-                                value={formData.email}
-                                onChange={e => setFormData({ ...formData, email: e.target.value })}
-                                className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-                            />
-                        </div>
-                        <div className="col-span-1">
+                    {/* Account Number and Level of Service */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
                             <label className="block text-sm font-semibold text-gray-700 mb-1">Account Number</label>
                             <input
                                 type="text"
                                 value={formData.accountNumber}
                                 onChange={e => setFormData({ ...formData, accountNumber: e.target.value })}
-                                className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                             />
                         </div>
-                        <div className="col-span-1">
-                            <label className="block text-sm font-semibold text-gray-700 mb-1">Status</label>
-                            <div className="flex items-center space-x-2 mt-2">
-                                <span className={`px-2 py-1 rounded-full text-xs font-bold ${formData.status === 'active' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>
-                                    {formData.status.toUpperCase()}
-                                </span>
-                                <button type="button" onClick={() => setFormData(p => ({ ...p, status: p.status === 'active' ? 'inactive' : 'active' }))} className="text-blue-600 text-xs hover:underline">Toggle</button>
-                            </div>
-                        </div>
-                        <div className="col-span-1">
-                            <label className="block text-sm font-semibold text-gray-700 mb-1">Ride Alone?</label>
-                            <div className="mt-2">
-                                <label className="inline-flex items-center cursor-pointer">
-                                    <input
-                                        type="checkbox"
-                                        checked={formData.rideAlone}
-                                        onChange={e => setFormData({ ...formData, rideAlone: e.target.checked })}
-                                        className="sr-only peer"
-                                    />
-                                    <div className="relative w-11 h-6 bg-gray-200 peer-focus:outline-none ring-0 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
-                                </label>
-                            </div>
-                        </div>
-                    </div>
-
-                    {/* Service / Notes */}
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div>
-                            <label className="block text-sm font-semibold text-gray-700 mb-1">Default Level of Service</label>
+                            <label className="block text-sm font-semibold text-gray-700 mb-1">Level of Service</label>
                             <select
                                 value={formData.serviceLevel}
                                 onChange={e => setFormData({ ...formData, serviceLevel: e.target.value })}
-                                className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                             >
                                 <option value="">Select Level</option>
                                 <option value="ambulatory">Ambulatory</option>
@@ -421,52 +292,18 @@ export const RiderManagement: React.FC = () => {
                                 <option value="stretcher">Stretcher</option>
                             </select>
                         </div>
-                        <div>
-                            <label className="block text-sm font-semibold text-gray-700 mb-1">Rider Notes</label>
-                            <textarea
-                                rows={2}
-                                value={formData.notes}
-                                onChange={e => setFormData({ ...formData, notes: e.target.value })}
-                                className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-                                placeholder="Enter Rider Notes"
-                            />
-                        </div>
                     </div>
 
-                    {/* Address Section */}
-                    <div className="pt-2 border-t border-gray-100">
-                        <h4 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">Address</h4>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            <div>
-                                <label className="block text-sm font-semibold text-gray-700 mb-1">Address Label</label>
-                                <input type="text" placeholder="Home, Facility, etc"
-                                    value={formData.addressLabel}
-                                    onChange={e => setFormData({ ...formData, addressLabel: e.target.value })}
-                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg" />
-                            </div>
-                            <div>
-                                <label className="block text-sm font-semibold text-gray-700 mb-1">Landmark</label>
-                                <input type="text" placeholder="Behind the gate..."
-                                    value={formData.landmark}
-                                    onChange={e => setFormData({ ...formData, landmark: e.target.value })}
-                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg" />
-                            </div>
-                            <div className="md:col-span-2">
-                                <label className="block text-sm font-semibold text-gray-700 mb-1">Address <span className="text-red-500">*</span></label>
-                                <AddressAutocomplete
-                                    label=""
-                                    value={formData.address}
-                                    onChange={(val) => setFormData(prev => ({ ...prev, address: val }))}
-                                />
-                            </div>
-                            <div className="md:col-span-2">
-                                <label className="block text-sm font-semibold text-gray-700 mb-1">Address Line 2</label>
-                                <input type="text"
-                                    value={formData.addressLine2}
-                                    onChange={e => setFormData({ ...formData, addressLine2: e.target.value })}
-                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg" />
-                            </div>
-                        </div>
+                    {/* Rider Notes */}
+                    <div>
+                        <label className="block text-sm font-semibold text-gray-700 mb-1">Rider Notes</label>
+                        <textarea
+                            rows={3}
+                            value={formData.notes}
+                            onChange={e => setFormData({ ...formData, notes: e.target.value })}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                            placeholder="Enter any notes about this rider..."
+                        />
                     </div>
 
                     <div className="flex justify-end space-x-3 pt-4 border-t border-gray-100">

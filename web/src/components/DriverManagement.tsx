@@ -1,30 +1,38 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
+import Toast, { ToastType } from './Toast';
 import { ConfirmModal } from './ConfirmModal';
-import { Plus, Edit2, Trash2, Star, MapPin, Phone, Mail, Award, DollarSign, UserCheck, UserX, Search, Filter, Download, CheckSquare, TrendingUp, FileText, AlertCircle, Eye, Key } from 'lucide-react';
+import { Plus, Edit2, Trash2, Star, MapPin, Phone, Mail, Award, DollarSign, UserCheck, UserX, Search, Download, CheckSquare, TrendingUp, FileText, AlertCircle, Eye, Key, Upload, X as XIcon } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { useAuth } from '../context/AuthContext';
 import { Modal } from './Modal';
 import { StatusBadge } from './StatusBadge';
-import { DriverRateTiers } from './DriverRateTiers';
 import { DriverPerformance } from './DriverPerformance';
 import { DriverDocumentMonitor } from './DriverDocumentMonitor';
-import { DriverProfile } from './DriverProfile';
 import { DriverProfilePage } from './DriverProfilePage';
 import { BulkDocumentUpload } from './BulkDocumentUpload';
 import { DocumentExpiryCalendar } from './DocumentExpiryCalendar';
 import { PasswordResetModal } from './PasswordResetModal';
 import { checkDriverDocuments } from '../utils/documentExpiryMonitor';
 import { Driver } from '../types';
+import * as api from '../services/api';
+
+// Rate tier structure
+interface RateTier {
+  fromMiles: number;
+  toMiles: number;
+  rate: number;
+}
+
+// Rates are now stored as a single compact JSONB:
+// { ambulatory: [...[from,to,rate], additionalRate], wheelchair: [...], stretcher: [...], deductions: [rental, insurance, %] }
 
 export const DriverManagement: React.FC = () => {
   const { drivers, addDriver, updateDriver, deleteDriver, trips } = useApp();
   const { user } = useAuth();
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [isRateModalOpen, setIsRateModalOpen] = useState(false);
   const [isDocumentMonitorOpen, setIsDocumentMonitorOpen] = useState(false);
   const [isBulkUploadOpen, setIsBulkUploadOpen] = useState(false);
   const [isCalendarOpen, setIsCalendarOpen] = useState(false);
-  const [rateConfigDriver, setRateConfigDriver] = useState<Driver | null>(null);
   const [performanceDriver, setPerformanceDriver] = useState<Driver | null>(null);
   const [profileDriver, setProfileDriver] = useState<Driver | null>(null);
   const [editingDriver, setEditingDriver] = useState<Driver | null>(null);
@@ -39,6 +47,42 @@ export const DriverManagement: React.FC = () => {
   } | null>(null);
   const [filterStatus, setFilterStatus] = useState<string>('all');
   const [searchTerm, setSearchTerm] = useState('');
+  const [toast, setToast] = useState<{ message: string; type: ToastType } | null>(null);
+  const showToast = (message: string, type: ToastType) => setToast({ message, type });
+  const [docFiles, setDocFiles] = useState<Record<string, File | null>>({
+    driver_license: null,
+    vehicle_insurance: null,
+    vehicle_registration: null,
+    medical_cert: null,
+    background_check: null,
+  });
+  const [existingDocs, setExistingDocs] = useState<any[]>([]);
+
+  const fetchExistingDocs = useCallback(async (driverId: string) => {
+    try {
+      const result = await api.getDriverDocuments(driverId);
+      if (result.success) setExistingDocs(result.data || []);
+    } catch { setExistingDocs([]); }
+  }, []);
+
+  const getExistingDoc = (docType: string) =>
+    existingDocs.find(d => d.document_type === docType && !d.file_url?.startsWith('pending://'));
+
+  const handleViewExistingDoc = async (fileUrl: string) => {
+    try {
+      const url = await api.getSignedUrl('driver-documents', fileUrl);
+      window.open(url, '_blank');
+    } catch { showToast('Failed to open document', 'error'); }
+  };
+
+  const handleDeleteExistingDoc = async (driverId: string, docId: string) => {
+    try {
+      await api.deleteDriverDocument(driverId, docId);
+      await fetchExistingDocs(driverId);
+      showToast('Document deleted', 'success');
+    } catch { showToast('Failed to delete document', 'error'); }
+  };
+
   const [selectedDrivers, setSelectedDrivers] = useState<string[]>([]);
 
   const [formData, setFormData] = useState({
@@ -51,12 +95,19 @@ export const DriverManagement: React.FC = () => {
     licenseNumber: '',
     temporaryPassword: '',
     status: 'available' as Driver['status'],
-    licenseExpiryDate: '',
-    insuranceExpiryDate: '',
-    registrationExpiryDate: '',
-    medicalCertExpiryDate: '',
-    backgroundCheckExpiryDate: '',
   });
+
+  // Tiered rate state - start with zeros until user sets values
+  const [ambulatoryTiers, setAmbulatoryTiers] = useState<RateTier[]>([{ fromMiles: 1, toMiles: 0, rate: 0 }]);
+  const [wheelchairTiers, setWheelchairTiers] = useState<RateTier[]>([{ fromMiles: 1, toMiles: 0, rate: 0 }]);
+  const [stretcherTiers, setStretcherTiers] = useState<RateTier[]>([{ fromMiles: 1, toMiles: 0, rate: 0 }]);
+  const [ambulatoryAdditionalRate, setAmbulatoryAdditionalRate] = useState(0);
+  const [wheelchairAdditionalRate, setWheelchairAdditionalRate] = useState(0);
+  const [stretcherAdditionalRate, setStretcherAdditionalRate] = useState(0);
+  // Deductions state
+  const [vehicleRentalDeduction, setVehicleRentalDeduction] = useState(0);
+  const [insuranceDeduction, setInsuranceDeduction] = useState(0);
+  const [percentageDeduction, setPercentageDeduction] = useState(0);
 
   const resetForm = () => {
     setFormData({
@@ -69,18 +120,96 @@ export const DriverManagement: React.FC = () => {
       licenseNumber: '',
       temporaryPassword: '',
       status: 'available',
-      licenseExpiryDate: '',
-      insuranceExpiryDate: '',
-      registrationExpiryDate: '',
-      medicalCertExpiryDate: '',
-      backgroundCheckExpiryDate: '',
     });
     setEditingDriver(null);
+    setExistingDocs([]);
   };
 
-  const handleOpenModal = (driver?: Driver) => {
+  const resetRateTiers = () => {
+    setAmbulatoryTiers([{ fromMiles: 1, toMiles: 0, rate: 0 }]);
+    setWheelchairTiers([{ fromMiles: 1, toMiles: 0, rate: 0 }]);
+    setStretcherTiers([{ fromMiles: 1, toMiles: 0, rate: 0 }]);
+    setAmbulatoryAdditionalRate(0);
+    setWheelchairAdditionalRate(0);
+    setStretcherAdditionalRate(0);
+    setVehicleRentalDeduction(0);
+    setInsuranceDeduction(0);
+    setPercentageDeduction(0);
+  };
+
+  // Helper functions for tiered rates
+  const addTier = (serviceLevel: 'ambulatory' | 'wheelchair' | 'stretcher') => {
+    const setter = serviceLevel === 'ambulatory' ? setAmbulatoryTiers :
+                   serviceLevel === 'wheelchair' ? setWheelchairTiers : setStretcherTiers;
+    const tiers = serviceLevel === 'ambulatory' ? ambulatoryTiers :
+                  serviceLevel === 'wheelchair' ? wheelchairTiers : stretcherTiers;
+    const lastTier = tiers[tiers.length - 1];
+    // New tier starts at lastTier.toMiles + 1
+    const newFrom = lastTier.toMiles + 1;
+    setter([...tiers, { fromMiles: newFrom, toMiles: 0, rate: 0 }]);
+  };
+
+  const removeTier = (serviceLevel: 'ambulatory' | 'wheelchair' | 'stretcher', index: number) => {
+    const setter = serviceLevel === 'ambulatory' ? setAmbulatoryTiers :
+                   serviceLevel === 'wheelchair' ? setWheelchairTiers : setStretcherTiers;
+    const tiers = serviceLevel === 'ambulatory' ? ambulatoryTiers :
+                  serviceLevel === 'wheelchair' ? wheelchairTiers : stretcherTiers;
+    if (tiers.length > 1) {
+      const newTiers = tiers.filter((_, i) => i !== index);
+      // Recalculate fromMiles to maintain continuity
+      const recalculated = newTiers.map((tier, i) => ({
+        ...tier,
+        fromMiles: i === 0 ? 1 : newTiers[i - 1].toMiles + 1
+      }));
+      setter(recalculated);
+    }
+  };
+
+  const updateTier = (serviceLevel: 'ambulatory' | 'wheelchair' | 'stretcher', index: number, field: keyof RateTier, value: number) => {
+    const setter = serviceLevel === 'ambulatory' ? setAmbulatoryTiers :
+                   serviceLevel === 'wheelchair' ? setWheelchairTiers : setStretcherTiers;
+    const tiers = serviceLevel === 'ambulatory' ? ambulatoryTiers :
+                  serviceLevel === 'wheelchair' ? wheelchairTiers : stretcherTiers;
+    const updated = [...tiers];
+    
+    if (field === 'toMiles') {
+      // Ensure toMiles > fromMiles
+      const minTo = updated[index].fromMiles + 1;
+      updated[index] = { ...updated[index], toMiles: Math.max(value, minTo) };
+      // Update next tier's fromMiles to be toMiles + 1
+      if (index + 1 < updated.length) {
+        updated[index + 1] = { ...updated[index + 1], fromMiles: updated[index].toMiles + 1 };
+      }
+    } else if (field === 'fromMiles' && index === 0) {
+      // First tier always starts at 1
+      updated[0] = { ...updated[0], fromMiles: 1 };
+    } else {
+      updated[index] = { ...updated[index], [field]: value };
+    }
+    setter(updated);
+  };
+
+  // Check if a tier is valid (To > From)
+  const isTierValid = (tier: RateTier) => tier.toMiles > tier.fromMiles;
+  
+  // Check if can add new tier (last tier must be valid)
+  const canAddTier = (serviceLevel: 'ambulatory' | 'wheelchair' | 'stretcher') => {
+    const tiers = serviceLevel === 'ambulatory' ? ambulatoryTiers :
+                  serviceLevel === 'wheelchair' ? wheelchairTiers : stretcherTiers;
+    const lastTier = tiers[tiers.length - 1];
+    return isTierValid(lastTier);
+  };
+
+  // Check if all tiers are valid for saving
+  const areAllTiersValid = () => {
+    const allTiers = [...ambulatoryTiers, ...wheelchairTiers, ...stretcherTiers];
+    return allTiers.every(isTierValid);
+  };
+
+  const handleOpenModal = async (driver?: Driver) => {
     if (driver) {
       setEditingDriver(driver);
+      fetchExistingDocs(driver.id);
       setFormData({
         name: driver.name,
         firstName: driver.firstName || '',
@@ -91,27 +220,46 @@ export const DriverManagement: React.FC = () => {
         licenseNumber: driver.licenseNumber,
         temporaryPassword: driver.temporaryPassword || '',
         status: driver.status,
-        licenseExpiryDate: (driver as any).license_expiry_date || '',
-        insuranceExpiryDate: (driver as any).insurance_expiry_date || '',
-        registrationExpiryDate: (driver as any).registration_expiry_date || '',
-        medicalCertExpiryDate: (driver as any).medical_cert_expiry_date || '',
-        backgroundCheckExpiryDate: (driver as any).background_check_expiry_date || '',
       });
+      
+      // Load rates from single JSONB column
+      const rates = driver.rates || {};
+      // Parse compact format: each service level is [...tiers, additionalRate]
+      const parseServiceLevel = (arr: any[]) => {
+        if (!arr || !Array.isArray(arr) || arr.length === 0) return { tiers: [{ fromMiles: 1, toMiles: 0, rate: 0 }], additionalRate: 0 };
+        const additionalRate = typeof arr[arr.length - 1] === 'number' && !Array.isArray(arr[arr.length - 1]) ? arr[arr.length - 1] : 0;
+        const tierArrays = arr.filter(item => Array.isArray(item));
+        const tiers = tierArrays.map((t: number[]) => ({ fromMiles: t[0], toMiles: t[1], rate: t[2] }));
+        return { tiers: tiers.length > 0 ? tiers : [{ fromMiles: 1, toMiles: 0, rate: 0 }], additionalRate };
+      };
+
+      if (rates.ambulatory) {
+        const { tiers, additionalRate } = parseServiceLevel(rates.ambulatory);
+        setAmbulatoryTiers(tiers);
+        setAmbulatoryAdditionalRate(additionalRate);
+      }
+      if (rates.wheelchair) {
+        const { tiers, additionalRate } = parseServiceLevel(rates.wheelchair);
+        setWheelchairTiers(tiers);
+        setWheelchairAdditionalRate(additionalRate);
+      }
+      if (rates.stretcher) {
+        const { tiers, additionalRate } = parseServiceLevel(rates.stretcher);
+        setStretcherTiers(tiers);
+        setStretcherAdditionalRate(additionalRate);
+      }
+      if (rates.deductions && Array.isArray(rates.deductions)) {
+        setVehicleRentalDeduction(rates.deductions[0] || 0);
+        setInsuranceDeduction(rates.deductions[1] || 0);
+        setPercentageDeduction(rates.deductions[2] || 0);
+      }
     } else {
       resetForm();
+      resetRateTiers();
     }
     setIsModalOpen(true);
   };
 
-  const handleOpenRateConfig = (driver: Driver) => {
-    setRateConfigDriver(driver);
-    setIsRateModalOpen(true);
-  };
-
-  const handleCloseRateConfig = () => {
-    setIsRateModalOpen(false);
-    setRateConfigDriver(null);
-  };
 
   const handleOpenPerformance = (driver: Driver) => {
     setPerformanceDriver(driver);
@@ -126,31 +274,85 @@ export const DriverManagement: React.FC = () => {
     resetForm();
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    const driverData = {
-      ...formData,
-      license_expiry_date: formData.licenseExpiryDate || null,
-      insurance_expiry_date: formData.insuranceExpiryDate || null,
-      registration_expiry_date: formData.registrationExpiryDate || null,
-      medical_cert_expiry_date: formData.medicalCertExpiryDate || null,
-      background_check_expiry_date: formData.backgroundCheckExpiryDate || null,
-    };
-
-    if (editingDriver) {
-      updateDriver(editingDriver.id, driverData);
-    } else {
-      addDriver({
-        ...driverData,
-        clinicId: user?.clinicId || '',
-        createdBy: user?.id,
-        isActive: true,
-        status: 'available',
-      });
+    // Validate all tiers before saving
+    if (!areAllTiersValid()) {
+      showToast('Please ensure all rate tiers have "To Miles" greater than "From Miles"', 'error');
+      return;
     }
 
-    handleCloseModal();
+    // Build compact rates JSONB: each service level = [...[from,to,rate], additionalRate], deductions = [rental, insurance, %]
+    const rates = {
+      ambulatory: [...ambulatoryTiers.map(t => [t.fromMiles, t.toMiles, t.rate]), ambulatoryAdditionalRate],
+      wheelchair: [...wheelchairTiers.map(t => [t.fromMiles, t.toMiles, t.rate]), wheelchairAdditionalRate],
+      stretcher: [...stretcherTiers.map(t => [t.fromMiles, t.toMiles, t.rate]), stretcherAdditionalRate],
+      deductions: [vehicleRentalDeduction, insuranceDeduction, percentageDeduction],
+    };
+
+    const driverData = {
+      name: `${formData.firstName} ${formData.lastName}`.trim(),
+      firstName: formData.firstName,
+      lastName: formData.lastName,
+      dateOfBirth: formData.dateOfBirth,
+      email: formData.email,
+      phone: formData.phone,
+      licenseNumber: formData.licenseNumber,
+      temporaryPassword: formData.temporaryPassword,
+      status: formData.status,
+      rates,
+    };
+
+    try {
+      let driverId: string | null = null;
+
+      if (editingDriver) {
+        await updateDriver(editingDriver.id, driverData as any);
+        driverId = editingDriver.id;
+        showToast('Driver updated successfully', 'success');
+      } else {
+        const result: any = await addDriver({
+          ...driverData,
+          clinicId: user?.clinicId || '',
+          createdBy: user?.id,
+          isActive: true,
+          status: 'available',
+        } as any);
+        driverId = result?.data?.id || null;
+        const tempPw = result?.temporaryPassword;
+        showToast(tempPw ? `Driver created! Temp password: ${tempPw}` : 'Driver created successfully', 'success');
+      }
+
+      // Upload any selected documents via backend → Supabase Storage
+      if (driverId) {
+        const docEntries = Object.entries(docFiles).filter(([, file]) => file !== null);
+        for (const [docType, file] of docEntries) {
+          if (file) {
+            try {
+              const filePath = `${driverId}/${docType}/${Date.now()}_${file.name}`;
+              const uploadResult = await api.uploadFileToStorage('driver-documents', filePath, file);
+
+              await api.uploadDriverDocument(driverId, {
+                documentType: docType,
+                fileName: file.name,
+                fileUrl: uploadResult.filePath,
+                fileSize: file.size,
+              });
+            } catch (uploadErr: any) {
+              console.error(`Failed to upload ${docType}:`, uploadErr);
+            }
+          }
+        }
+      }
+
+      setDocFiles({ driver_license: null, vehicle_insurance: null, vehicle_registration: null, medical_cert: null, background_check: null });
+      handleCloseModal();
+      resetRateTiers();
+    } catch (error: any) {
+      const msg = error?.message || 'Unknown error';
+      showToast(`Failed: ${msg}`, 'error');
+    }
   };
 
   const handleDelete = (id: string) => {
@@ -161,8 +363,13 @@ export const DriverManagement: React.FC = () => {
       message: `Are you sure you want to delete ${driver?.name || 'this driver'}? This action cannot be undone.`,
       confirmText: 'Delete',
       confirmStyle: 'danger',
-      onConfirm: () => {
-        deleteDriver(id);
+      onConfirm: async () => {
+        try {
+          await deleteDriver(id);
+          showToast('Driver deleted successfully', 'success');
+        } catch (error: any) {
+          showToast(`Failed to delete driver: ${error?.message || 'Unknown error'}`, 'error');
+        }
         setConfirmModal(null);
       },
     });
@@ -178,7 +385,7 @@ export const DriverManagement: React.FC = () => {
 
   const handleDeactivateDriver = (driverId: string, showConfirm = true) => {
     if (!showConfirm) {
-      updateDriver(driverId, { isActive: false, status: 'offline' });
+      updateDriver(driverId, { isActive: false, status: 'off_duty' });
       return;
     }
     const driver = drivers.find(d => d.id === driverId);
@@ -189,7 +396,7 @@ export const DriverManagement: React.FC = () => {
       confirmText: 'Deactivate',
       confirmStyle: 'warning',
       onConfirm: () => {
-        updateDriver(driverId, { isActive: false, status: 'offline' });
+        updateDriver(driverId, { isActive: false, status: 'off_duty' });
         setConfirmModal(null);
       },
     });
@@ -326,7 +533,7 @@ export const DriverManagement: React.FC = () => {
             />
           </div>
           <div className="flex items-center space-x-2 overflow-x-auto">
-            {['all', 'available', 'on_trip', 'offline'].map(status => (
+            {['all', 'available', 'on_trip', 'off_duty'].map(status => (
               <button
                 key={status}
                 onClick={() => setFilterStatus(status)}
@@ -437,7 +644,7 @@ export const DriverManagement: React.FC = () => {
                   )}
                   <div className="flex items-center space-x-1 text-amber-500 mt-1">
                     <Star className="w-4 h-4 fill-current" />
-                    <span className="text-sm font-semibold">{driver.rating.toFixed(1)}</span>
+                    <span className="text-sm font-semibold">{(driver.rating ?? 0).toFixed(1)}</span>
                   </div>
                 </div>
               </div>
@@ -538,13 +745,13 @@ export const DriverManagement: React.FC = () => {
                 <div className="flex items-center space-x-2 mb-3">
                   {driver.status === 'available' && (
                     <button
-                      onClick={() => handleStatusChange(driver.id, 'offline')}
+                      onClick={() => handleStatusChange(driver.id, 'off_duty')}
                       className="flex-1 text-xs px-3 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors"
                     >
-                      Set Offline
+                      Set Off Duty
                     </button>
                   )}
-                  {driver.status === 'offline' && (
+                  {(driver.status === 'off_duty' || driver.status === 'offline') && (
                     <button
                       onClick={() => handleStatusChange(driver.id, 'available')}
                       className="flex-1 text-xs px-3 py-2 bg-green-100 text-green-700 rounded-lg hover:bg-green-200 transition-colors"
@@ -588,30 +795,14 @@ export const DriverManagement: React.FC = () => {
                   <span className="text-sm font-semibold">Delete</span>
                 </button>
               </div>
-              <div className="grid grid-cols-3 gap-2">
-                <button
-                  onClick={() => handleOpenRateConfig(driver)}
-                  className="flex items-center justify-center space-x-1 px-2 py-2 text-green-600 bg-green-50 rounded-lg hover:bg-green-100 transition-colors"
-                >
-                  <DollarSign className="w-4 h-4" />
-                  <span className="text-xs font-semibold">Rates</span>
-                </button>
-                <button
-                  onClick={() => handleOpenPerformance(driver)}
-                  className="flex items-center justify-center space-x-1 px-2 py-2 text-blue-600 bg-blue-50 rounded-lg hover:bg-blue-100 transition-colors"
-                >
-                  <TrendingUp className="w-4 h-4" />
-                  <span className="text-xs font-semibold">Stats</span>
-                </button>
-                <button
-                  onClick={() => setResetPasswordDriver(driver)}
-                  className="flex items-center justify-center space-x-1 px-2 py-2 text-amber-600 bg-amber-50 rounded-lg hover:bg-amber-100 transition-colors"
-                  title="Reset Password"
-                >
-                  <Key className="w-4 h-4" />
-                  <span className="text-xs font-semibold">Reset</span>
-                </button>
-              </div>
+              <button
+                onClick={() => setResetPasswordDriver(driver)}
+                className="w-full flex items-center justify-center space-x-2 px-4 py-2 text-amber-600 bg-amber-50 rounded-lg hover:bg-amber-100 transition-colors"
+                title="Reset Password"
+              >
+                <Key className="w-4 h-4" />
+                <span className="text-xs font-semibold">Reset Password</span>
+              </button>
             </div>
 
             {driver.currentLatitude && driver.currentLongitude && (
@@ -619,7 +810,7 @@ export const DriverManagement: React.FC = () => {
                 <div className="flex items-center space-x-2 text-sm text-gray-600">
                   <MapPin className="w-4 h-4 text-green-500" />
                   <span>
-                    Location: {driver.currentLatitude.toFixed(4)}, {driver.currentLongitude.toFixed(4)}
+                    Location: {(driver.currentLatitude ?? 0).toFixed(4)}, {(driver.currentLongitude ?? 0).toFixed(4)}
                   </span>
                 </div>
               </div>
@@ -773,91 +964,231 @@ export const DriverManagement: React.FC = () => {
               className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
             >
               <option value="available">Available</option>
-              <option value="offline">Offline</option>
+              <option value="off_duty">Off Duty</option>
             </select>
           </div>
 
-          {/* Document Expiry Dates Section */}
+          {/* Document Uploads Section */}
+          <div className="pt-6 border-t">
+            <h3 className="text-lg font-bold text-gray-900 mb-3 flex items-center gap-2">
+              <Upload className="w-5 h-5 text-amber-600" />
+              Driver Documents
+            </h3>
+            <div className="space-y-3">
+              {[
+                { key: 'driver_license', label: 'Driver License' },
+                { key: 'vehicle_insurance', label: 'Vehicle Insurance' },
+                { key: 'vehicle_registration', label: 'Vehicle Registration' },
+                { key: 'medical_cert', label: 'Medical Certificate' },
+                { key: 'background_check', label: 'Background Check' },
+              ].map(({ key, label }) => {
+                const existing = getExistingDoc(key);
+                return (
+                  <div key={key} className="p-3 bg-gray-50 rounded-lg border border-gray-200">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-sm font-semibold text-gray-800">{label}</span>
+                      {existing && (
+                        <span className="text-xs font-medium text-green-700 bg-green-100 px-2 py-0.5 rounded-full flex items-center gap-1">
+                          <CheckSquare className="w-3 h-3" /> Uploaded
+                        </span>
+                      )}
+                      {!existing && !docFiles[key] && (
+                        <span className="text-xs font-medium text-orange-600 bg-orange-50 px-2 py-0.5 rounded-full">Missing</span>
+                      )}
+                    </div>
+
+                    {/* Show existing uploaded doc */}
+                    {existing && (
+                      <div className="flex items-center justify-between bg-white rounded-md px-3 py-2 mb-2 border border-gray-100">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <FileText className="w-4 h-4 text-blue-500 flex-shrink-0" />
+                          <span className="text-xs text-gray-700 truncate">{existing.file_name}</span>
+                          <span className="text-xs text-gray-400 flex-shrink-0">
+                            {new Date(existing.submission_date).toLocaleDateString()}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-1 flex-shrink-0 ml-2">
+                          <button
+                            type="button"
+                            onClick={() => handleViewExistingDoc(existing.file_url)}
+                            className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-md transition-colors"
+                            title="View document"
+                          >
+                            <Eye className="w-3.5 h-3.5" />
+                          </button>
+                          {editingDriver && (
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteExistingDoc(editingDriver.id, existing.id)}
+                              className="p-1.5 text-red-500 hover:bg-red-50 rounded-md transition-colors"
+                              title="Delete document"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* File picker for new/replacement upload */}
+                    {docFiles[key] ? (
+                      <div className="flex items-center gap-2">
+                        <FileText className="w-4 h-4 text-green-600 flex-shrink-0" />
+                        <span className="text-xs text-green-700 truncate flex-1">{docFiles[key]!.name}</span>
+                        <button
+                          type="button"
+                          onClick={() => setDocFiles(prev => ({ ...prev, [key]: null }))}
+                          className="text-gray-400 hover:text-red-500 flex-shrink-0"
+                        >
+                          <XIcon className="w-4 h-4" />
+                        </button>
+                      </div>
+                    ) : (
+                      <label className="flex items-center gap-2 px-3 py-1.5 bg-white border border-dashed border-gray-300 rounded-md cursor-pointer hover:bg-gray-100 hover:border-blue-400 transition-colors text-xs text-gray-500">
+                        <Upload className="w-3.5 h-3.5" />
+                        {existing ? 'Replace with new file' : 'Choose file'}
+                        <input
+                          type="file"
+                          className="hidden"
+                          accept=".pdf,.jpg,.jpeg,.png,.doc,.docx"
+                          onChange={e => {
+                            const file = e.target.files?.[0] || null;
+                            setDocFiles(prev => ({ ...prev, [key]: file }));
+                          }}
+                        />
+                      </label>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+            <p className="text-xs text-gray-500 mt-2">Accepted: PDF, JPG, PNG, DOC. New documents will be uploaded after saving.</p>
+          </div>
+
+          {/* Driver Tiered Rates & Deductions Section */}
           <div className="pt-6 border-t">
             <h3 className="text-lg font-bold text-gray-900 mb-4 flex items-center gap-2">
-              <FileText className="w-5 h-5 text-amber-600" />
-              Document Expiry Dates
+              <DollarSign className="w-5 h-5 text-green-600" />
+              Payout Rate Tiers
             </h3>
             <p className="text-sm text-gray-600 mb-4">
-              Set expiry dates to receive automatic notifications before documents expire
+              Configure tiered payout rates based on mileage for each service level.
             </p>
 
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-2">
-                  🪪 Driver License Expiry
-                </label>
-                <input
-                  type="date"
-                  value={formData.licenseExpiryDate}
-                  onChange={e => setFormData({ ...formData, licenseExpiryDate: e.target.value })}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  min={new Date().toISOString().split('T')[0]}
-                />
+            {/* Ambulatory Tiers */}
+            <div className="mb-4 p-3 bg-blue-50 rounded-lg border border-blue-200">
+              <div className="flex items-center justify-between mb-2">
+                <h4 className="font-semibold text-blue-800 text-sm">Ambulatory Rates</h4>
+                <button type="button" onClick={() => addTier('ambulatory')} disabled={!canAddTier('ambulatory')} className={`text-xs font-medium flex items-center gap-1 ${canAddTier('ambulatory') ? 'text-blue-600 hover:text-blue-800' : 'text-gray-400 cursor-not-allowed'}`}>
+                  <Plus className="w-3 h-3" /> Add Tier
+                </button>
               </div>
-
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-2">
-                  📋 Vehicle Insurance Expiry
-                </label>
-                <input
-                  type="date"
-                  value={formData.insuranceExpiryDate}
-                  onChange={e => setFormData({ ...formData, insuranceExpiryDate: e.target.value })}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  min={new Date().toISOString().split('T')[0]}
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-2">
-                  🚗 Vehicle Registration Expiry
-                </label>
-                <input
-                  type="date"
-                  value={formData.registrationExpiryDate}
-                  onChange={e => setFormData({ ...formData, registrationExpiryDate: e.target.value })}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  min={new Date().toISOString().split('T')[0]}
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-2">
-                  ❤️ Medical Certification Expiry
-                </label>
-                <input
-                  type="date"
-                  value={formData.medicalCertExpiryDate}
-                  onChange={e => setFormData({ ...formData, medicalCertExpiryDate: e.target.value })}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  min={new Date().toISOString().split('T')[0]}
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-2">
-                  ✅ Background Check Expiry
-                </label>
-                <input
-                  type="date"
-                  value={formData.backgroundCheckExpiryDate}
-                  onChange={e => setFormData({ ...formData, backgroundCheckExpiryDate: e.target.value })}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  min={new Date().toISOString().split('T')[0]}
-                />
+              {ambulatoryTiers.map((tier, idx) => (
+                <div key={idx} className="flex items-center gap-2 mb-1">
+                  <input type="number" min="0" value={tier.fromMiles} onChange={e => updateTier('ambulatory', idx, 'fromMiles', Number(e.target.value))} className="w-16 px-2 py-1 border rounded text-xs" placeholder="From" />
+                  <span className="text-xs text-gray-500">to</span>
+                  <input type="number" min="0" value={tier.toMiles} onChange={e => updateTier('ambulatory', idx, 'toMiles', Number(e.target.value))} className="w-16 px-2 py-1 border rounded text-xs" placeholder="To" />
+                  <span className="text-xs text-gray-500">mi = $</span>
+                  <input type="number" step="0.01" min="0" value={tier.rate} onChange={e => updateTier('ambulatory', idx, 'rate', Number(e.target.value))} className="w-16 px-2 py-1 border rounded text-xs" />
+                  {ambulatoryTiers.length > 1 && <button type="button" onClick={() => removeTier('ambulatory', idx)} className="text-red-500 text-xs"><Trash2 className="w-3 h-3" /></button>}
+                </div>
+              ))}
+              <div className="mt-1 flex items-center gap-2">
+                <span className="text-xs text-gray-600">Additional $/mi:</span>
+                <input type="number" step="0.01" min="0" value={ambulatoryAdditionalRate} onChange={e => setAmbulatoryAdditionalRate(Number(e.target.value))} className="w-16 px-2 py-1 border rounded text-xs" />
               </div>
             </div>
 
-            <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
-              <p className="text-sm text-blue-900">
-                <span className="font-semibold">Automatic Alerts:</span> You and the driver will receive notifications 30 days before expiry, with daily reminders in the final 7 days.
-              </p>
+            {/* Wheelchair Tiers */}
+            <div className="mb-4 p-3 bg-purple-50 rounded-lg border border-purple-200">
+              <div className="flex items-center justify-between mb-2">
+                <h4 className="font-semibold text-purple-800 text-sm">Wheelchair Rates</h4>
+                <button type="button" onClick={() => addTier('wheelchair')} disabled={!canAddTier('wheelchair')} className={`text-xs font-medium flex items-center gap-1 ${canAddTier('wheelchair') ? 'text-purple-600 hover:text-purple-800' : 'text-gray-400 cursor-not-allowed'}`}>
+                  <Plus className="w-3 h-3" /> Add Tier
+                </button>
+              </div>
+              {wheelchairTiers.map((tier, idx) => (
+                <div key={idx} className="flex items-center gap-2 mb-1">
+                  <input type="number" min="0" value={tier.fromMiles} onChange={e => updateTier('wheelchair', idx, 'fromMiles', Number(e.target.value))} className="w-16 px-2 py-1 border rounded text-xs" placeholder="From" />
+                  <span className="text-xs text-gray-500">to</span>
+                  <input type="number" min="0" value={tier.toMiles} onChange={e => updateTier('wheelchair', idx, 'toMiles', Number(e.target.value))} className="w-16 px-2 py-1 border rounded text-xs" placeholder="To" />
+                  <span className="text-xs text-gray-500">mi = $</span>
+                  <input type="number" step="0.01" min="0" value={tier.rate} onChange={e => updateTier('wheelchair', idx, 'rate', Number(e.target.value))} className="w-16 px-2 py-1 border rounded text-xs" />
+                  {wheelchairTiers.length > 1 && <button type="button" onClick={() => removeTier('wheelchair', idx)} className="text-red-500 text-xs"><Trash2 className="w-3 h-3" /></button>}
+                </div>
+              ))}
+              <div className="mt-1 flex items-center gap-2">
+                <span className="text-xs text-gray-600">Additional $/mi:</span>
+                <input type="number" step="0.01" min="0" value={wheelchairAdditionalRate} onChange={e => setWheelchairAdditionalRate(Number(e.target.value))} className="w-16 px-2 py-1 border rounded text-xs" />
+              </div>
+            </div>
+
+            {/* Stretcher Tiers */}
+            <div className="mb-4 p-3 bg-orange-50 rounded-lg border border-orange-200">
+              <div className="flex items-center justify-between mb-2">
+                <h4 className="font-semibold text-orange-800 text-sm">Stretcher Rates</h4>
+                <button type="button" onClick={() => addTier('stretcher')} disabled={!canAddTier('stretcher')} className={`text-xs font-medium flex items-center gap-1 ${canAddTier('stretcher') ? 'text-orange-600 hover:text-orange-800' : 'text-gray-400 cursor-not-allowed'}`}>
+                  <Plus className="w-3 h-3" /> Add Tier
+                </button>
+              </div>
+              {stretcherTiers.map((tier, idx) => (
+                <div key={idx} className="flex items-center gap-2 mb-1">
+                  <input type="number" min="0" value={tier.fromMiles} onChange={e => updateTier('stretcher', idx, 'fromMiles', Number(e.target.value))} className="w-16 px-2 py-1 border rounded text-xs" placeholder="From" />
+                  <span className="text-xs text-gray-500">to</span>
+                  <input type="number" min="0" value={tier.toMiles} onChange={e => updateTier('stretcher', idx, 'toMiles', Number(e.target.value))} className="w-16 px-2 py-1 border rounded text-xs" placeholder="To" />
+                  <span className="text-xs text-gray-500">mi = $</span>
+                  <input type="number" step="0.01" min="0" value={tier.rate} onChange={e => updateTier('stretcher', idx, 'rate', Number(e.target.value))} className="w-16 px-2 py-1 border rounded text-xs" />
+                  {stretcherTiers.length > 1 && <button type="button" onClick={() => removeTier('stretcher', idx)} className="text-red-500 text-xs"><Trash2 className="w-3 h-3" /></button>}
+                </div>
+              ))}
+              <div className="mt-1 flex items-center gap-2">
+                <span className="text-xs text-gray-600">Additional $/mi:</span>
+                <input type="number" step="0.01" min="0" value={stretcherAdditionalRate} onChange={e => setStretcherAdditionalRate(Number(e.target.value))} className="w-16 px-2 py-1 border rounded text-xs" />
+              </div>
+            </div>
+
+            <h4 className="text-md font-semibold text-gray-800 mb-3 mt-4">Deductions</h4>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">Vehicle Rental ($)</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={vehicleRentalDeduction}
+                  onChange={e => setVehicleRentalDeduction(Number(e.target.value))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  placeholder="0.00"
+                />
+                <p className="text-xs text-gray-500 mt-1">Fixed deduction per pay period</p>
+              </div>
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">Insurance ($)</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={insuranceDeduction}
+                  onChange={e => setInsuranceDeduction(Number(e.target.value))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  placeholder="0.00"
+                />
+                <p className="text-xs text-gray-500 mt-1">Fixed deduction per pay period</p>
+              </div>
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">Percentage (%)</label>
+                <input
+                  type="number"
+                  step="0.1"
+                  min="0"
+                  max="100"
+                  value={percentageDeduction}
+                  onChange={e => setPercentageDeduction(Number(e.target.value))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  placeholder="0"
+                />
+                <p className="text-xs text-gray-500 mt-1">% deducted from total payout</p>
+              </div>
             </div>
           </div>
 
@@ -879,17 +1210,6 @@ export const DriverManagement: React.FC = () => {
         </form>
       </Modal>
 
-      {/* Rate Configuration Modal */}
-      {rateConfigDriver && (
-        <Modal
-          isOpen={isRateModalOpen}
-          onClose={handleCloseRateConfig}
-          title="Driver Rate Configuration"
-          size="xl"
-        >
-          <DriverRateTiers driverId={rateConfigDriver.id} onClose={handleCloseRateConfig} />
-        </Modal>
-      )}
 
       {/* Performance Modal */}
       {performanceDriver && (
@@ -921,7 +1241,7 @@ export const DriverManagement: React.FC = () => {
             // TODO: Implement actual message sending
           }}
           onAssignVehicle={(driverId, vehicleId) => {
-            updateDriver(driverId, { vehicleId });
+            updateDriver(driverId, { assignedVehicleId: vehicleId });
           }}
         />
       )}
@@ -972,6 +1292,16 @@ export const DriverManagement: React.FC = () => {
         onConfirm={confirmModal?.onConfirm || (() => {})}
         onCancel={() => setConfirmModal(null)}
       />
+
+      {/* Toast notifications */}
+      {toast && (
+        <Toast
+          message={toast.message}
+          type={toast.type}
+          onClose={() => setToast(null)}
+          duration={toast.type === 'error' ? 8000 : 5000}
+        />
+      )}
     </div>
   );
 };

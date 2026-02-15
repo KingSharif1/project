@@ -1,38 +1,41 @@
 import React, { useMemo } from 'react';
 import {
   TrendingUp,
-  TrendingDown,
   DollarSign,
   Clock,
-  Target,
   Users,
-  Car,
   AlertCircle,
   AlertTriangle,
   Award,
-  Percent,
-  CheckCircle2
+  CheckCircle2,
+  Percent
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 
 export const AdvancedAnalytics: React.FC = () => {
   const { trips, drivers, patients } = useApp();
+  const [startDate, setStartDate] = React.useState(() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 30);
+    return d.toISOString().split('T')[0];
+  });
+  const [endDate, setEndDate] = React.useState(() => new Date().toISOString().split('T')[0]);
 
   const analytics = useMemo(() => {
-    const now = new Date();
-    const last30Days = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-    const last60Days = new Date(now.getTime() - 60 * 24 * 60 * 60 * 1000);
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+    // Set end date to end of day
+    end.setHours(23, 59, 59, 999);
 
-    const currentTrips = trips.filter(t => new Date(t.scheduledTime) >= last30Days);
-    const previousTrips = trips.filter(
-      t => new Date(t.scheduledTime) >= last60Days && new Date(t.scheduledTime) < last30Days
-    );
+    const currentTrips = trips.filter(t => {
+      const d = new Date(t.scheduledTime);
+      return d >= start && d <= end;
+    });
 
-    const currentRevenue = currentTrips.reduce((sum, t) => sum + t.fare, 0);
-    const previousRevenue = previousTrips.reduce((sum, t) => sum + t.fare, 0);
-    const revenueGrowth = previousRevenue > 0
-      ? ((currentRevenue - previousRevenue) / previousRevenue) * 100
-      : 0;
+    const totalRevenue = currentTrips.reduce((sum, t) => sum + (t.fare || 0), 0);
+    const totalPayout = currentTrips.reduce((sum, t) => sum + (t.driverPayout || 0), 0);
+    const totalProfit = totalRevenue - totalPayout;
+    const profitMargin = totalRevenue > 0 ? (totalProfit / totalRevenue) * 100 : 0;
 
     const completedTrips = currentTrips.filter(t => t.status === 'completed');
     const cancelledTrips = currentTrips.filter(t => t.status === 'cancelled');
@@ -50,19 +53,15 @@ export const AdvancedAnalytics: React.FC = () => {
       ? (noShowTrips.length / currentTrips.length) * 100
       : 0;
 
-    const avgFare = completedTrips.length > 0
-      ? completedTrips.reduce((sum, t) => sum + t.fare, 0) / completedTrips.length
-      : 0;
-
     const activeDrivers = drivers.filter(d => d.status !== 'offline');
     const driverUtilization = activeDrivers.length > 0
-      ? (completedTrips.length / (activeDrivers.length * 30)) * 100
+      ? (completedTrips.length / (activeDrivers.length * 30)) * 100 // Approximation
       : 0;
 
     const topDrivers = drivers
       .map(driver => {
         const driverTrips = completedTrips.filter(t => t.driverId === driver.id);
-        const revenue = driverTrips.reduce((sum, t) => sum + t.fare, 0);
+        const revenue = driverTrips.reduce((sum, t) => sum + (t.fare || 0), 0);
         return {
           ...driver,
           tripCount: driverTrips.length,
@@ -80,7 +79,7 @@ export const AdvancedAnalytics: React.FC = () => {
       return {
         hour,
         count: hourTrips.length,
-        revenue: hourTrips.reduce((sum, t) => sum + t.fare, 0),
+        revenue: hourTrips.reduce((sum, t) => sum + (t.fare || 0), 0),
       };
     }).sort((a, b) => b.count - a.count).slice(0, 3);
 
@@ -96,85 +95,95 @@ export const AdvancedAnalytics: React.FC = () => {
       .slice(0, 5);
 
     return {
-      currentRevenue,
-      previousRevenue,
-      revenueGrowth,
+      totalRevenue,
+      totalPayout,
+      totalProfit,
+      profitMargin,
       totalTrips: currentTrips.length,
       completedTrips: completedTrips.length,
       completionRate,
       cancellationRate,
       noShowRate,
-      avgFare,
       driverUtilization,
       topDrivers,
       peakHours,
       patientFrequency,
+      revenueGrowth: 0, // Placeholder for revenue growth
     };
-  }, [trips, drivers, patients]);
+  }, [trips, drivers, patients, startDate, endDate]);
 
   const MetricCard: React.FC<{
     title: string;
     value: string | number;
-    change?: number;
+    subValue?: string;
     icon: React.FC<{ className?: string }>;
     iconColor: string;
-    trend?: 'up' | 'down';
-  }> = ({ title, value, change, icon: Icon, iconColor, trend }) => (
+  }> = ({ title, value, subValue, icon: Icon, iconColor }) => (
     <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
       <div className="flex items-start justify-between mb-4">
         <div className={`p-3 rounded-xl ${iconColor}`}>
           <Icon className="w-6 h-6" />
         </div>
-        {change !== undefined && (
-          <div className={`flex items-center space-x-1 text-sm font-semibold ${
-            trend === 'up' ? 'text-green-600' : trend === 'down' ? 'text-red-600' : 'text-gray-600'
-          }`}>
-            {trend === 'up' ? <TrendingUp className="w-4 h-4" /> : trend === 'down' ? <TrendingDown className="w-4 h-4" /> : null}
-            <span>{Math.abs(change).toFixed(1)}%</span>
-          </div>
-        )}
       </div>
       <h3 className="text-sm font-medium text-gray-600 mb-1">{title}</h3>
       <p className="text-3xl font-bold text-gray-900">{value}</p>
+      {subValue && <p className="text-sm text-gray-500 mt-1">{subValue}</p>}
     </div>
   );
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold text-gray-900 mb-2">Advanced Analytics</h1>
-        <p className="text-gray-600">Comprehensive performance insights and metrics</p>
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div>
+          <h1 className="text-3xl font-bold text-gray-900 mb-2">Advanced Analytics</h1>
+          <p className="text-gray-600">Profitability and performance metrics</p>
+        </div>
+        <div className="flex items-center gap-2 bg-white p-2 rounded-lg border border-gray-200 shadow-sm">
+          <input
+            type="date"
+            value={startDate}
+            onChange={(e) => setStartDate(e.target.value)}
+            className="border-none focus:ring-0 text-sm text-gray-600"
+          />
+          <span className="text-gray-400">-</span>
+          <input
+            type="date"
+            value={endDate}
+            onChange={(e) => setEndDate(e.target.value)}
+            className="border-none focus:ring-0 text-sm text-gray-600"
+          />
+        </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         <MetricCard
-          title="Total Revenue (30 Days)"
-          value={`$${analytics.currentRevenue.toLocaleString()}`}
-          change={analytics.revenueGrowth}
+          title="Total Revenue"
+          value={`$${analytics.totalRevenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
           icon={DollarSign}
           iconColor="bg-green-100 text-green-600"
-          trend={analytics.revenueGrowth > 0 ? 'up' : 'down'}
+        />
+
+        <MetricCard
+          title="Total Payout"
+          value={`$${analytics.totalPayout.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+          icon={DollarSign}
+          iconColor="bg-red-100 text-red-600"
+        />
+
+        <MetricCard
+          title="Net Profit"
+          value={`$${analytics.totalProfit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+          subValue={`Margin: ${analytics.profitMargin.toFixed(1)}%`}
+          icon={TrendingUp}
+          iconColor="bg-blue-100 text-blue-600"
         />
 
         <MetricCard
           title="Completed Trips"
           value={analytics.completedTrips}
-          icon={Car}
-          iconColor="bg-blue-100 text-blue-600"
-        />
-
-        <MetricCard
-          title="Completion Rate"
-          value={`${analytics.completionRate.toFixed(1)}%`}
-          icon={Target}
+          subValue={`${analytics.completionRate.toFixed(1)}% Completion`}
+          icon={CheckCircle2}
           iconColor="bg-purple-100 text-purple-600"
-        />
-
-        <MetricCard
-          title="Average Fare"
-          value={`$${analytics.avgFare.toFixed(2)}`}
-          icon={DollarSign}
-          iconColor="bg-cyan-100 text-cyan-600"
         />
       </div>
 
@@ -292,7 +301,7 @@ export const AdvancedAnalytics: React.FC = () => {
       <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
         <div className="flex items-center space-x-3 mb-6">
           <Users className="w-6 h-6 text-purple-600" />
-          <h2 className="text-xl font-bold text-gray-900">Most Frequent Patients (30 Days)</h2>
+          <h2 className="text-xl font-bold text-gray-900">Most Frequent Patients</h2>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full">
@@ -307,7 +316,7 @@ export const AdvancedAnalytics: React.FC = () => {
             <tbody>
               {analytics.patientFrequency.map((patient, index) => (
                 <tr key={patient.id} className={index % 2 === 0 ? 'bg-gray-50' : 'bg-white'}>
-                  <td className="py-3 px-4 text-gray-900 font-medium">{patient.name}</td>
+                  <td className="py-3 px-4 text-gray-900 font-medium">{patient.firstName} {patient.lastName}</td>
                   <td className="py-3 px-4 text-center">
                     <span className="bg-blue-100 text-blue-800 px-3 py-1 rounded-full text-sm font-semibold">
                       {patient.tripCount}

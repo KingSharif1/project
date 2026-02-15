@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { MessageSquare, CheckCircle, XCircle, Clock, RefreshCw, Phone, AlertCircle } from 'lucide-react';
-import { supabase } from '../lib/supabase';
+import * as api from '../services/api';
 import { formatDateUS, formatTimeUS } from '../utils/dateFormatter';
 
 interface SMSNotification {
@@ -31,35 +31,30 @@ export const SMSHistory: React.FC<SMSHistoryProps> = ({ tripId, driverId, limit 
   const fetchSMSHistory = async () => {
     setLoading(true);
     try {
-      let query = supabase
-        .from('sms_notifications')
-        .select('*')
-        .order('created_at', { ascending: false })
-        .limit(limit);
+      let data: any[] = [];
 
       if (tripId) {
-        query = query.eq('trip_id', tripId);
-      }
-
-      if (driverId) {
-        query = query.eq('driver_id', driverId);
-      }
-
-      const { data, error } = await query;
-
-      if (error) {
-        console.error('Error fetching SMS history:', error);
+        const result = await api.getTripSmsHistory(tripId);
+        data = result.data || [];
       } else {
-        setSmsHistory(data || []);
-
-        const statsData = {
-          total: data?.length || 0,
-          sent: data?.filter(s => s.status === 'sent' || s.status === 'delivered').length || 0,
-          failed: data?.filter(s => s.status === 'failed').length || 0,
-          simulated: data?.filter(s => s.status === 'simulated').length || 0,
-        };
-        setStats(statsData);
+        const result = await api.getSmsHistory(undefined, undefined, limit);
+        data = result.data || [];
       }
+
+      // Client-side filter for driverId if needed
+      if (driverId) {
+        data = data.filter((s: any) => s.driver_id === driverId);
+      }
+
+      setSmsHistory(data);
+
+      const statsData = {
+        total: data.length,
+        sent: data.filter((s: any) => s.status === 'sent' || s.status === 'delivered').length,
+        failed: data.filter((s: any) => s.status === 'failed').length,
+        simulated: data.filter((s: any) => s.status === 'simulated').length,
+      };
+      setStats(statsData);
     } catch (error) {
       console.error('Error loading SMS history:', error);
     } finally {

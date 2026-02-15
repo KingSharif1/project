@@ -6,12 +6,12 @@ import { useApp } from '../context/AppContext';
 import { User } from '../types';
 import { Modal } from './Modal';
 import { StatusBadge } from './StatusBadge';
-import { supabase } from '../lib/supabase';
+import * as api from '../services/api';
 import Toast, { ToastType } from './Toast';
 
 export const UserManagement: React.FC = () => {
   const { isAdmin, user } = useAuth();
-  const { facilities, clinics } = useApp();
+  const { contractors, clinics } = useApp();
   const [users, setUsers] = useState<User[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -38,19 +38,11 @@ export const UserManagement: React.FC = () => {
   const loadUsers = async () => {
     try {
       setIsLoading(true);
-      const { data, error } = await supabase
-        .from('users')
-        .select('*')
-        .order('created_at', { ascending: false });
-
-      if (error) {
-        console.error('Error loading users:', error);
-        showToast('Failed to load users', 'error');
-        return;
-      }
+      const result = await api.getUsers();
+      const data = result.data || [];
 
       // Filter out superadmin users - they should not be visible to regular admins
-      const filteredData = (data || []).filter((u: any) => u.role !== 'superadmin');
+      const filteredData = data.filter((u: any) => u.role !== 'superadmin');
       
       const formattedUsers: User[] = filteredData.map((u: any) => ({
         id: u.id,
@@ -143,24 +135,14 @@ export const UserManagement: React.FC = () => {
 
     try {
       if (editingUser) {
-        // Update existing user in public.users
-        const { error } = await supabase
-          .from('users')
-          .update({
-            email: formData.email,
-            first_name: formData.firstName,
-            last_name: formData.lastName,
-            role: formData.role,
-            clinic_id: formData.clinicId || null,
-            updated_at: new Date().toISOString(),
-          })
-          .eq('id', editingUser.id);
-
-        if (error) {
-          console.error('Error updating user:', error);
-          showToast(`Failed to update user: ${error.message}`, 'error');
-          return;
-        }
+        // Update existing user via backend API
+        await api.updateUser(editingUser.id, {
+          email: formData.email,
+          firstName: formData.firstName,
+          lastName: formData.lastName,
+          role: formData.role,
+          clinicId: formData.clinicId || null,
+        });
 
         setUsers(prev =>
           prev.map(u =>
@@ -171,136 +153,40 @@ export const UserManagement: React.FC = () => {
         );
         showToast('User updated successfully', 'success');
       } else {
-        // Create new user
+        // Create new user via backend API (handles auth + public.users)
         if (!formData.temporaryPassword) {
           showToast('Please enter a temporary password', 'error');
           return;
         }
 
-        // Step 1: Create user in Supabase Auth
-        const { data: authData, error: authError } = await supabase.auth.admin.createUser({
+        const result = await api.createUser({
           email: formData.email,
+          firstName: formData.firstName,
+          lastName: formData.lastName,
+          role: formData.role,
+          clinicId: formData.clinicId || user?.clinicId || null,
           password: formData.temporaryPassword,
-          email_confirm: true,
-          user_metadata: {
-            first_name: formData.firstName,
-            last_name: formData.lastName,
-            role: formData.role,
-          }
         });
 
-        if (authError) {
-          console.error('Error creating auth user:', authError);
-          
-          // If admin API fails, try signUp (for non-admin scenarios)
-          const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
-            email: formData.email,
-            password: formData.temporaryPassword,
-            options: {
-              data: {
-                first_name: formData.firstName,
-                last_name: formData.lastName,
-                role: formData.role,
-              }
-            }
-          });
+        // Add to local state
+        const newUser: User = {
+          id: result.data.id,
+          email: formData.email,
+          fullName,
+          role: formData.role,
+          clinicId: formData.clinicId || user?.clinicId,
+          isActive: true,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+        setUsers(prev => [newUser, ...prev]);
 
-          if (signUpError) {
-            console.error('Error with signUp:', signUpError);
-            showToast(`Failed to create user: ${signUpError.message}`, 'error');
-            return;
-          }
-
-          if (!signUpData.user) {
-            showToast('Failed to create user - no user returned', 'error');
-            return;
-          }
-
-          // Step 2: Create user in public.users table
-          const { error: publicError } = await supabase
-            .from('users')
-            .insert({
-              id: signUpData.user.id,
-              email: formData.email,
-              first_name: formData.firstName,
-              last_name: formData.lastName,
-              role: formData.role,
-              clinic_id: formData.clinicId || user?.clinicId || null,
-              is_active: true,
-              created_at: new Date().toISOString(),
-              updated_at: new Date().toISOString(),
-            });
-
-          if (publicError) {
-            console.error('Error creating public user:', publicError);
-            showToast(`User created in auth but failed to sync: ${publicError.message}`, 'warning');
-          }
-
-          // Add to local state
-          const newUser: User = {
-            id: signUpData.user.id,
-            email: formData.email,
-            fullName,
-            role: formData.role,
-            clinicId: formData.clinicId || user?.clinicId,
-            isActive: true,
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-          };
-          setUsers(prev => [newUser, ...prev]);
-
-          // Show success modal instead of ugly alert
-          setSuccessModal({
-            isOpen: true,
-            email: formData.email,
-            password: formData.temporaryPassword,
-          });
-          handleCloseModal();
-          return;
-        }
-
-        // Admin API succeeded
-        if (authData.user) {
-          // Step 2: Create user in public.users table
-          const { error: publicError } = await supabase
-            .from('users')
-            .insert({
-              id: authData.user.id,
-              email: formData.email,
-              first_name: formData.firstName,
-              last_name: formData.lastName,
-              role: formData.role,
-              clinic_id: formData.clinicId || user?.clinicId || null,
-              is_active: true,
-              created_at: new Date().toISOString(),
-              updated_at: new Date().toISOString(),
-            });
-
-          if (publicError) {
-            console.error('Error creating public user:', publicError);
-            showToast(`User created in auth but failed to sync: ${publicError.message}`, 'warning');
-          }
-
-          // Add to local state
-          const newUser: User = {
-            id: authData.user.id,
-            email: formData.email,
-            fullName,
-            role: formData.role,
-            clinicId: formData.clinicId || user?.clinicId,
-            isActive: true,
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-          };
-          setUsers(prev => [newUser, ...prev]);
-
-          // Show success modal instead of ugly alert
-          setSuccessModal({
-            isOpen: true,
-            email: formData.email,
-            password: formData.temporaryPassword,
-          });
-        }
+        // Show success modal
+        setSuccessModal({
+          isOpen: true,
+          email: formData.email,
+          password: result.temporaryPassword || formData.temporaryPassword,
+        });
       }
 
       handleCloseModal();
@@ -319,19 +205,7 @@ export const UserManagement: React.FC = () => {
     const newActiveStatus = !userToToggle.isActive;
     
     try {
-      const { error } = await supabase
-        .from('users')
-        .update({ 
-          is_active: newActiveStatus,
-          updated_at: new Date().toISOString()
-        })
-        .eq('id', userId);
-
-      if (error) {
-        console.error('Error toggling user status:', error);
-        showToast(`Failed to update user status: ${error.message}`, 'error');
-        return;
-      }
+      await api.toggleUserActive(userId);
 
       setUsers(prev =>
         prev.map(user =>
@@ -357,18 +231,7 @@ export const UserManagement: React.FC = () => {
       confirmStyle: 'danger',
       onConfirm: async () => {
         try {
-          // Delete from public.users table
-          const { error } = await supabase
-            .from('users')
-            .delete()
-            .eq('id', userId);
-
-          if (error) {
-            console.error('Error deleting user:', error);
-            showToast(`Failed to delete user: ${error.message}`, 'error');
-            setConfirmModal(null);
-            return;
-          }
+          await api.deleteUser(userId);
 
           setUsers(prev => prev.filter(user => user.id !== userId));
           setConfirmModal(null);
@@ -529,7 +392,7 @@ export const UserManagement: React.FC = () => {
                       <div className="flex items-center space-x-2 text-sm text-gray-600 md:col-span-2">
                         <Building className="w-4 h-4" />
                         <span className="font-medium">
-                          {facilities.find(f => f.id === user.clinicId)?.name || clinics.find(c => c.id === user.clinicId)?.name || 'Company Level'}
+                          {contractors.find(f => f.id === user.clinicId)?.name || clinics.find(c => c.id === user.clinicId)?.name || 'Company Level'}
                         </span>
                       </div>
                     )}
@@ -692,7 +555,7 @@ export const UserManagement: React.FC = () => {
           {formData.role === 'dispatcher' && (
             <div>
               <label className="block text-sm font-semibold text-gray-700 mb-2">
-                Assigned Facility
+                Assigned Contractor
               </label>
               <select
                 value={formData.clinicId}
@@ -700,18 +563,18 @@ export const UserManagement: React.FC = () => {
                 className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               >
                 <option value={user?.clinicId || ''}>
-                  {clinics.find(c => c.id === user?.clinicId)?.name || 'Company'} (No Facility)
+                  {clinics.find(c => c.id === user?.clinicId)?.name || 'Company'} (No Contractor)
                 </option>
-                {facilities.map(facility => (
-                  <option key={facility.id} value={facility.id}>
-                    {facility.name}
+                {contractors.map(contractor => (
+                  <option key={contractor.id} value={contractor.id}>
+                    {contractor.name}
                   </option>
                 ))}
               </select>
               <p className="mt-2 text-sm text-gray-600">
                 {formData.clinicId === user?.clinicId || !formData.clinicId
                   ? 'Dispatcher will have access to all company trips and drivers'
-                  : 'Dispatcher can only see and manage trips and drivers for their assigned facility'}
+                  : 'Dispatcher can only see and manage trips and drivers for their assigned contractor'}
               </p>
             </div>
           )}

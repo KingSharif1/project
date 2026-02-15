@@ -1,7 +1,16 @@
 import React, { useState, useEffect } from 'react';
 import { Plus, Save, Trash2 } from 'lucide-react';
-import { DriverRateTier } from '../types';
-import { supabase } from '../lib/supabase';
+import * as api from '../services/api';
+
+// Local interface for rate tier structure
+interface RateTier {
+  fromMiles: number;
+  toMiles: number;
+  rate: number;
+}
+
+// Rates are stored as a single compact JSONB:
+// { ambulatory: [...[from,to,rate], additionalRate], wheelchair: [...], stretcher: [...], deductions: [rental, insurance, %] }
 
 interface DriverRateTiersProps {
   driverId: string;
@@ -9,23 +18,25 @@ interface DriverRateTiersProps {
 }
 
 export const DriverRateTiers: React.FC<DriverRateTiersProps> = ({ driverId, onClose }) => {
-  const [ambulatoryTiers, setAmbulatoryTiers] = useState<DriverRateTier[]>([
-    { serviceLevel: 'ambulatory', fromMiles: 1, toMiles: 5, rate: 14 }
+  const [ambulatoryTiers, setAmbulatoryTiers] = useState<RateTier[]>([
+    { fromMiles: 1, toMiles: 5, rate: 14 }
   ]);
   const [ambulatoryAdditionalRate, setAmbulatoryAdditionalRate] = useState(1.2);
 
-  const [wheelchairTiers, setWheelchairTiers] = useState<DriverRateTier[]>([
-    { serviceLevel: 'wheelchair', fromMiles: 1, toMiles: 5, rate: 28 }
+  const [wheelchairTiers, setWheelchairTiers] = useState<RateTier[]>([
+    { fromMiles: 1, toMiles: 5, rate: 28 }
   ]);
   const [wheelchairAdditionalRate, setWheelchairAdditionalRate] = useState(2);
 
-  const [stretcherTiers, setStretcherTiers] = useState<DriverRateTier[]>([
-    { serviceLevel: 'stretcher', fromMiles: 1, toMiles: 5, rate: 35 }
+  const [stretcherTiers, setStretcherTiers] = useState<RateTier[]>([
+    { fromMiles: 1, toMiles: 5, rate: 35 }
   ]);
   const [stretcherAdditionalRate, setStretcherAdditionalRate] = useState(2.5);
 
-  const [cancellationRate, setCancellationRate] = useState(0);
-  const [noShowRate, setNoShowRate] = useState(0);
+  // Deductions (instead of cancellation/no-show for drivers)
+  const [vehicleRentalDeduction, setVehicleRentalDeduction] = useState(0);
+  const [insuranceDeduction, setInsuranceDeduction] = useState(0);
+  const [percentageDeduction, setPercentageDeduction] = useState(0);
 
   const [loading, setLoading] = useState(true);
 
@@ -35,61 +46,38 @@ export const DriverRateTiers: React.FC<DriverRateTiersProps> = ({ driverId, onCl
 
   const loadRateTiers = async () => {
     try {
-      const { data, error } = await supabase
-        .from('driver_rate_tiers')
-        .select('*')
-        .eq('driver_id', driverId)
-        .order('service_level', { ascending: true })
-        .order('from_miles', { ascending: true });
+      // Load single rates JSONB via backend API
+      const result = await api.getDriverRates(driverId);
+      const rates = result.data || {};
 
-      if (error) throw error;
+      // Parse compact format: each service level is [...[from,to,rate], additionalRate]
+      const parseServiceLevel = (arr: any[]) => {
+        if (!arr || !Array.isArray(arr) || arr.length === 0) return null;
+        const additionalRate = typeof arr[arr.length - 1] === 'number' && !Array.isArray(arr[arr.length - 1]) ? arr[arr.length - 1] : 0;
+        const tierArrays = arr.filter(item => Array.isArray(item));
+        const tiers = tierArrays.map((t: number[]) => ({ fromMiles: t[0], toMiles: t[1], rate: t[2] }));
+        return { tiers, additionalRate };
+      };
 
-      if (data && data.length > 0) {
-        const ambulatory = data.filter(t => t.service_level === 'ambulatory').map(t => ({
-          id: t.id,
-          driverId: t.driver_id,
-          serviceLevel: t.service_level as 'ambulatory',
-          fromMiles: Number(t.from_miles),
-          toMiles: Number(t.to_miles),
-          rate: Number(t.rate)
-        }));
-
-        const wheelchair = data.filter(t => t.service_level === 'wheelchair').map(t => ({
-          id: t.id,
-          driverId: t.driver_id,
-          serviceLevel: t.service_level as 'wheelchair',
-          fromMiles: Number(t.from_miles),
-          toMiles: Number(t.to_miles),
-          rate: Number(t.rate)
-        }));
-
-        const stretcher = data.filter(t => t.service_level === 'stretcher').map(t => ({
-          id: t.id,
-          driverId: t.driver_id,
-          serviceLevel: t.service_level as 'stretcher',
-          fromMiles: Number(t.from_miles),
-          toMiles: Number(t.to_miles),
-          rate: Number(t.rate)
-        }));
-
-        if (ambulatory.length) setAmbulatoryTiers(ambulatory);
-        if (wheelchair.length) setWheelchairTiers(wheelchair);
-        if (stretcher.length) setStretcherTiers(stretcher);
+      if (rates.ambulatory) {
+        const parsed = parseServiceLevel(rates.ambulatory);
+        if (parsed?.tiers.length) setAmbulatoryTiers(parsed.tiers);
+        if (parsed) setAmbulatoryAdditionalRate(parsed.additionalRate);
       }
-
-      // Load additional rates and cancellation/no-show rates from driver record
-      const { data: driverData } = await supabase
-        .from('drivers')
-        .select('ambulatory_additional_mile_rate, wheelchair_additional_mile_rate, stretcher_additional_mile_rate, cancellation_rate, no_show_rate')
-        .eq('id', driverId)
-        .single();
-
-      if (driverData) {
-        if (driverData.ambulatory_additional_mile_rate) setAmbulatoryAdditionalRate(Number(driverData.ambulatory_additional_mile_rate));
-        if (driverData.wheelchair_additional_mile_rate) setWheelchairAdditionalRate(Number(driverData.wheelchair_additional_mile_rate));
-        if (driverData.stretcher_additional_mile_rate) setStretcherAdditionalRate(Number(driverData.stretcher_additional_mile_rate));
-        if (driverData.cancellation_rate !== null) setCancellationRate(Number(driverData.cancellation_rate));
-        if (driverData.no_show_rate !== null) setNoShowRate(Number(driverData.no_show_rate));
+      if (rates.wheelchair) {
+        const parsed = parseServiceLevel(rates.wheelchair);
+        if (parsed?.tiers.length) setWheelchairTiers(parsed.tiers);
+        if (parsed) setWheelchairAdditionalRate(parsed.additionalRate);
+      }
+      if (rates.stretcher) {
+        const parsed = parseServiceLevel(rates.stretcher);
+        if (parsed?.tiers.length) setStretcherTiers(parsed.tiers);
+        if (parsed) setStretcherAdditionalRate(parsed.additionalRate);
+      }
+      if (rates.deductions && Array.isArray(rates.deductions)) {
+        setVehicleRentalDeduction(rates.deductions[0] || 0);
+        setInsuranceDeduction(rates.deductions[1] || 0);
+        setPercentageDeduction(rates.deductions[2] || 0);
       }
     } catch (error) {
       console.error('Error loading rate tiers:', error);
@@ -108,8 +96,7 @@ export const DriverRateTiers: React.FC<DriverRateTiersProps> = ({ driverId, onCl
                   stretcherTiers;
 
     const lastTier = tiers[tiers.length - 1];
-    const newTier: DriverRateTier = {
-      serviceLevel,
+    const newTier: RateTier = {
       fromMiles: lastTier.toMiles + 1,
       toMiles: lastTier.toMiles + 5,
       rate: lastTier.rate + 5
@@ -151,43 +138,17 @@ export const DriverRateTiers: React.FC<DriverRateTiersProps> = ({ driverId, onCl
     setter(updated);
   };
 
+  // Build compact rates JSONB and save all at once
+  const buildCompactRates = () => ({
+    ambulatory: [...ambulatoryTiers.map(t => [t.fromMiles, t.toMiles, t.rate]), ambulatoryAdditionalRate],
+    wheelchair: [...wheelchairTiers.map(t => [t.fromMiles, t.toMiles, t.rate]), wheelchairAdditionalRate],
+    stretcher: [...stretcherTiers.map(t => [t.fromMiles, t.toMiles, t.rate]), stretcherAdditionalRate],
+    deductions: [vehicleRentalDeduction, insuranceDeduction, percentageDeduction],
+  });
+
   const saveRates = async (serviceLevel: 'ambulatory' | 'wheelchair' | 'stretcher') => {
     try {
-      const tiers = serviceLevel === 'ambulatory' ? ambulatoryTiers :
-                    serviceLevel === 'wheelchair' ? wheelchairTiers :
-                    stretcherTiers;
-
-      const additionalRate = serviceLevel === 'ambulatory' ? ambulatoryAdditionalRate :
-                             serviceLevel === 'wheelchair' ? wheelchairAdditionalRate :
-                             stretcherAdditionalRate;
-
-      // Delete existing tiers
-      await supabase
-        .from('driver_rate_tiers')
-        .delete()
-        .eq('driver_id', driverId)
-        .eq('service_level', serviceLevel);
-
-      // Insert new tiers
-      const { error: insertError } = await supabase
-        .from('driver_rate_tiers')
-        .insert(tiers.map(tier => ({
-          driver_id: driverId,
-          service_level: serviceLevel,
-          from_miles: tier.fromMiles,
-          to_miles: tier.toMiles,
-          rate: tier.rate
-        })));
-
-      if (insertError) throw insertError;
-
-      // Update additional rate
-      const updateField = `${serviceLevel}_additional_mile_rate`;
-      await supabase
-        .from('drivers')
-        .update({ [updateField]: additionalRate })
-        .eq('id', driverId);
-
+      await api.updateDriverRates(driverId, { rates: buildCompactRates() });
       alert(`${serviceLevel.charAt(0).toUpperCase() + serviceLevel.slice(1)} rates saved successfully!`);
     } catch (error) {
       console.error('Error saving rates:', error);
@@ -195,20 +156,13 @@ export const DriverRateTiers: React.FC<DriverRateTiersProps> = ({ driverId, onCl
     }
   };
 
-  const saveSpecialRates = async () => {
+  const saveDeductions = async () => {
     try {
-      await supabase
-        .from('drivers')
-        .update({
-          cancellation_rate: cancellationRate,
-          no_show_rate: noShowRate
-        })
-        .eq('id', driverId);
-
-      alert('Cancellation and No-Show rates saved successfully!');
+      await api.updateDriverRates(driverId, { rates: buildCompactRates() });
+      alert('Deductions saved successfully!');
     } catch (error) {
-      console.error('Error saving special rates:', error);
-      alert('Failed to save rates. Please try again.');
+      console.error('Error saving deductions:', error);
+      alert('Failed to save deductions. Please try again.');
     }
   };
 
@@ -219,7 +173,7 @@ export const DriverRateTiers: React.FC<DriverRateTiersProps> = ({ driverId, onCl
   const renderTierSection = (
     title: string,
     serviceLevel: 'ambulatory' | 'wheelchair' | 'stretcher',
-    tiers: DriverRateTier[],
+    tiers: RateTier[],
     additionalRate: number,
     setAdditionalRate: (value: number) => void,
     colorClass: string
@@ -349,53 +303,70 @@ export const DriverRateTiers: React.FC<DriverRateTiersProps> = ({ driverId, onCl
       )}
 
       <div className="mb-8 pt-6 border-t">
-        <h3 className="text-lg font-bold text-gray-900 mb-4">Special Trip Rates</h3>
+        <h3 className="text-lg font-bold text-gray-900 mb-4">Deductions</h3>
         <p className="text-sm text-gray-600 mb-4">
-          Set driver payout rates for cancelled and no-show trips. Leave at $0 if drivers should not be paid for these trips.
+          Set deductions that will be applied after calculating the driver's total payout.
         </p>
 
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-3 gap-4">
           <div>
             <label className="block text-xs font-semibold text-gray-700 mb-1">
-              Cancellation Rate ($):
+              Vehicle Rental ($):
             </label>
             <input
               type="number"
               step="0.01"
               min="0"
-              value={cancellationRate}
-              onChange={e => setCancellationRate(parseFloat(e.target.value) || 0)}
+              value={vehicleRentalDeduction}
+              onChange={e => setVehicleRentalDeduction(parseFloat(e.target.value) || 0)}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               placeholder="0.00"
             />
-            <p className="text-xs text-gray-500 mt-1">Driver gets this amount when trip is cancelled</p>
+            <p className="text-xs text-gray-500 mt-1">Fixed amount deducted for vehicle rental</p>
           </div>
 
           <div>
             <label className="block text-xs font-semibold text-gray-700 mb-1">
-              No-Show Rate ($):
+              Insurance ($):
             </label>
             <input
               type="number"
               step="0.01"
               min="0"
-              value={noShowRate}
-              onChange={e => setNoShowRate(parseFloat(e.target.value) || 0)}
+              value={insuranceDeduction}
+              onChange={e => setInsuranceDeduction(parseFloat(e.target.value) || 0)}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               placeholder="0.00"
             />
-            <p className="text-xs text-gray-500 mt-1">Driver gets this amount when patient is a no-show</p>
+            <p className="text-xs text-gray-500 mt-1">Fixed amount deducted for insurance</p>
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold text-gray-700 mb-1">
+              Percentage (%):
+            </label>
+            <input
+              type="number"
+              step="0.1"
+              min="0"
+              max="100"
+              value={percentageDeduction}
+              onChange={e => setPercentageDeduction(parseFloat(e.target.value) || 0)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              placeholder="0"
+            />
+            <p className="text-xs text-gray-500 mt-1">Percentage deducted from total payout</p>
           </div>
         </div>
 
         <div className="mt-4">
           <button
             type="button"
-            onClick={saveSpecialRates}
+            onClick={saveDeductions}
             className="flex items-center space-x-2 px-4 py-2 text-white bg-red-600 rounded-lg hover:bg-red-700 transition-colors text-sm font-semibold"
           >
             <Save className="w-4 h-4" />
-            <span>Save Special Rates</span>
+            <span>Save Deductions</span>
           </button>
         </div>
       </div>

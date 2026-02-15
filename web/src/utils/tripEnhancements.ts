@@ -2,7 +2,7 @@ import { createTrackingLink } from './trackingLinks';
 import { sendSMS, SMS_TEMPLATES, notifyPatient, notifyDriver } from './smsService';
 import { generateTripInvoice, autoSendInvoice } from './automatedInvoicing';
 import { createDriverEarning } from './earningsCalculator';
-import { supabase } from '../lib/supabase';
+import * as api from '../services/api';
 
 // Enhance trip with tracking link and notifications when assigned
 export const enhanceTripOnAssignment = async (
@@ -166,17 +166,17 @@ export const sendAppointmentReminder = async (trip: any, clinicName?: string) =>
     let driverPhone = '';
 
     if (trip.driver_id || trip.driverId) {
-      const { data: driver } = await supabase
-        .from('drivers')
-        .select('first_name, last_name, notification_phone, phone')
-        .eq('id', trip.driver_id || trip.driverId)
-        .maybeSingle();
-
-      if (driver) {
-        driverName = driver.first_name && driver.last_name
-          ? `${driver.first_name} ${driver.last_name}`
-          : 'your driver';
-        driverPhone = driver.notification_phone || driver.phone || '';
+      try {
+        const driverResult = await api.getDriver(trip.driver_id || trip.driverId);
+        const driver = driverResult.data;
+        if (driver) {
+          driverName = driver.first_name && driver.last_name
+            ? `${driver.first_name} ${driver.last_name}`
+            : 'your driver';
+          driverPhone = driver.notification_phone || driver.phone || '';
+        }
+      } catch (e) {
+        // Driver fetch failed, use defaults
       }
     }
 

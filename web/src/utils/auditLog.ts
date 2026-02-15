@@ -1,4 +1,4 @@
-import { supabase } from '../lib/supabase';
+import * as api from '../services/api';
 
 export type AuditAction =
   | 'create'
@@ -19,7 +19,7 @@ export type EntityType =
   | 'patient'
   | 'driver'
   | 'vehicle'
-  | 'facility'
+  | 'contractor'
   | 'user'
   | 'invoice'
   | 'auth';
@@ -69,16 +69,12 @@ export async function logAudit({
       ip_address: ipAddress || null,
     };
 
-    const { data, error } = await supabase
-      .from('activity_log')
-      .insert(logEntry as any)
-      .select();
-
-    if (error) {
-      console.error('Audit log error:', error);
-      console.error('Failed entry:', logEntry);
+    const result = await api.insertActivityLog(logEntry);
+    if (result.success) {
+      console.log('Audit log created:', result.data);
     } else {
-      console.log('Audit log created:', data);
+      console.error('Audit log error');
+      console.error('Failed entry:', logEntry);
     }
   } catch (error) {
     console.error('Failed to create audit log:', error);
@@ -95,43 +91,11 @@ export async function getAuditLogs(filters?: {
   action?: AuditAction;
 }) {
   try {
-    let query = supabase
-      .from('activity_log')
-      .select('*')
-      .order('created_at', { ascending: false });
-
-    // Filter by clinic (company/tenant) - this ensures multi-tenant isolation
-    if (filters?.clinicId) {
-      query = query.eq('clinic_id', filters.clinicId);
-    }
-    if (filters?.userId) {
-      query = query.eq('user_id', filters.userId);
-    }
-    if (filters?.entityType) {
-      query = query.eq('entity_type', filters.entityType);
-    }
-    if (filters?.entityId) {
-      query = query.eq('entity_id', filters.entityId);
-    }
-    if (filters?.action) {
-      query = query.eq('action', filters.action);
-    }
-    if (filters?.startDate) {
-      query = query.gte('created_at', filters.startDate);
-    }
-    if (filters?.endDate) {
-      query = query.lte('created_at', filters.endDate);
-    }
-
-    const { data, error } = await query.limit(1000);
-
-    if (error) {
-      console.error('Error fetching audit logs:', error);
-      throw error;
-    }
+    const result = await api.getActivityLogs(filters);
+    const data = result.data || [];
     
-    console.log('Fetched audit logs from database:', data?.length || 0, 'entries');
-    return data || [];
+    console.log('Fetched audit logs from database:', data.length, 'entries');
+    return data;
   } catch (error) {
     console.error('Error fetching audit logs:', error);
     return [];

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Car, Users, CheckCircle, DollarSign, MapPin, Clock, Navigation, Bell, AlertCircle, TrendingUp, Calendar } from 'lucide-react';
+import { Car, Users, CheckCircle, DollarSign, MapPin, Clock, Navigation, Calendar } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { useAuth } from '../context/AuthContext';
 import { StatCard } from './StatCard';
@@ -12,7 +12,7 @@ import { AutoAssignModal } from './AutoAssignModal';
 import { Trip } from '../types';
 
 interface DashboardProps {
-  onNavigate?: (view: 'dashboard' | 'trips' | 'drivers' | 'vehicles' | 'facilities' | 'billing' | 'reports' | 'users' | 'activity') => void;
+  onNavigate?: (view: 'dashboard' | 'trips' | 'calendar' | 'tracking' | 'drivers' | 'riders' | 'vehicles' | 'facilities' | 'users' | 'reports' | 'payouts' | 'analytics' | 'activity' | 'hipaa' | 'settings' | 'reminders' | 'superadmin') => void;
   onOpenDocumentMonitor?: () => void;
 }
 
@@ -115,7 +115,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate, onOpenDocument
         />
         <StatCard
           title="Total Revenue"
-          value={`$${dashboardStats.totalRevenue.toFixed(2)}`}
+          value={`$${(dashboardStats.totalRevenue || 0).toFixed(2)}`}
           icon={DollarSign}
           color="bg-gradient-to-br from-amber-500 to-orange-600"
         />
@@ -168,7 +168,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate, onOpenDocument
                         </span>
                       </div>
                       <span className="text-sm font-semibold text-gray-900">
-                        ${trip.fare.toFixed(2)}
+                        {trip.tripNumber || '-'}
                       </span>
                     </div>
                   </div>
@@ -199,7 +199,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate, onOpenDocument
                     <div className="flex items-center space-x-2">
                       <span className="text-sm text-gray-600">{driver.totalTrips} trips</span>
                       <span className="text-sm text-gray-400">•</span>
-                      <span className="text-sm text-amber-600">★ {driver.rating.toFixed(1)}</span>
+                      <span className="text-sm text-amber-600">★ {(driver.rating || 5.0).toFixed(1)}</span>
                     </div>
                   </div>
                 </div>

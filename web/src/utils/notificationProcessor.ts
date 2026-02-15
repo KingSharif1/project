@@ -1,4 +1,5 @@
 import { supabase } from '../lib/supabase';
+import * as api from '../services/api';
 
 interface PendingNotification {
   id: string;
@@ -16,25 +17,18 @@ async function processEmailNotifications(): Promise<{ processed: number; failed:
   const results = { processed: 0, failed: 0 };
 
   try {
-    const { data: emails, error } = await supabase
-      .from('email_notification_log')
-      .select('id')
-      .eq('status', 'pending')
-      .order('created_at', { ascending: true })
-      .limit(50);
+    const pendingResult = await api.getPendingEmails();
+    const emails = pendingResult.data || [];
 
-    if (error || !emails || emails.length === 0) return results;
+    if (emails.length === 0) return results;
 
     //console.log(`Processing ${emails.length} pending emails...`);
 
     for (const email of emails) {
       try {
-        const { data, error: functionError } = await supabase.functions.invoke(
-          'send-email-notification',
-          { body: { log_id: email.id } }
-        );
+        const result = await api.sendEmailNotification(email.id);
 
-        if (functionError || !data?.success) {
+        if (!result?.success) {
           results.failed++;
         } else {
           results.processed++;
@@ -67,51 +61,29 @@ export async function processPendingNotifications(): Promise<{
   };
 
   try {
-    // Process SMS notifications
-    const { data: notifications, error } = await supabase
-      .from('automated_notification_log')
-      .select('id, notification_type, recipient_contact, message_body, subject, trip_id')
-      .eq('status', 'pending')
-      .order('created_at', { ascending: true })
-      .limit(100);
+    // Process pending notifications via backend API
+    const pendingResult = await api.getPendingNotifications();
+    const notifications = pendingResult.data || [];
 
-    if (error) {
-      console.error('Error fetching pending notifications:', error);
-      results.errors.push(`Failed to fetch notifications: ${error.message}`);
-      return results;
-    }
-
-    if (!notifications || notifications.length === 0) {
-      // console.log('No pending notifications to process');
+    if (notifications.length === 0) {
       return results;
     }
 
     //console.log(`Processing ${notifications.length} pending notifications...`);
 
-    // Process each notification
+    // Process each notification via backend API
     for (const notification of notifications) {
       try {
-        const { data, error: functionError } = await supabase.functions.invoke(
-          'automated-notifications',
-          {
-            body: {
-              type: notification.notification_type,
-              log_id: notification.id,
-            },
-          }
+        const result = await api.processAutomatedNotification(
+          notification.notification_type,
+          notification.id,
         );
 
-        if (functionError) {
-          console.error(`Error processing notification ${notification.id}:`, functionError);
-          results.failed++;
-          results.errors.push(`${notification.id}: ${functionError.message}`);
-        } else if (data?.success) {
-          //console.log(`Successfully processed notification ${notification.id}`);
+        if (result?.success) {
           results.processed++;
         } else {
-          console.error(`Failed to process notification ${notification.id}:`, data?.error);
           results.failed++;
-          results.errors.push(`${notification.id}: ${data?.error || 'Unknown error'}`);
+          results.errors.push(`${notification.id}: ${(result as any)?.error || 'Unknown error'}`);
         }
 
         // Small delay to avoid rate limiting
@@ -146,10 +118,10 @@ export function startNotificationProcessor(): () => void {
   // Process immediately
   processPendingNotifications();
 
-  // Then process every 30 seconds
+  // Then process every 5 minutes
   const intervalId = setInterval(() => {
     processPendingNotifications();
-  }, 30000); // 30 seconds
+  }, 300000); // 5 minutes
 
   // Return cleanup function
   return () => {
@@ -179,19 +151,17 @@ export function subscribeToNotifications(): () => void {
 
         // Process this notification immediately
         if (payload.new && payload.new.id) {
-          supabase.functions.invoke('automated-notifications', {
-            body: {
-              type: payload.new.notification_type,
-              log_id: payload.new.id,
-            },
-          }).then(({ data, error }) => {
-            if (error) {
-              console.error('Error processing new notification:', error);
-            } else if (data?.success) {
+          api.processAutomatedNotification(
+            payload.new.notification_type,
+            payload.new.id,
+          ).then((result) => {
+            if (result?.success) {
               //console.log('Successfully processed new notification:', payload.new.id);
             } else {
-              console.error('Failed to process new notification:', data?.error);
+              console.error('Failed to process new notification:', (result as any)?.error);
             }
+          }).catch((error) => {
+            console.error('Error processing new notification:', error);
           });
         }
       }

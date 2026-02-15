@@ -32,27 +32,17 @@ router.get('/', async (req, res) => {
       return res.status(500).json({ error: 'Failed to fetch patients' });
     }
 
-    // Transform to frontend format
+    // Transform to frontend format (only columns that exist in DB)
     const patients = data.map(p => ({
       id: p.id,
       firstName: p.first_name,
       lastName: p.last_name,
-      middleName: p.middle_name,
       fullName: `${p.first_name || ''} ${p.last_name || ''}`.trim(),
       dateOfBirth: p.date_of_birth,
       phone: p.phone,
-      gender: p.gender,
-      emergencyContactName: p.emergency_contact_name,
-      emergencyContactPhone: p.emergency_contact_phone,
-      medicalNotes: p.medical_notes,
-      mobilityRequirements: p.mobility_requirements,
-      insuranceProvider: p.insurance_provider,
-      insuranceNumber: p.insurance_number,
       accountNumber: p.account_number,
-      rideAlone: p.ride_alone,
-      addressLabel: p.address_label,
-      landmark: p.landmark,
-      addressLine2: p.address_line_2,
+      serviceLevel: p.service_level || 'ambulatory',
+      notes: p.notes,
       clinicId: p.clinic_id,
       createdAt: p.created_at,
       updatedAt: p.updated_at,
@@ -98,26 +88,17 @@ router.get('/:id', async (req, res) => {
 router.post('/', requireRole('superadmin', 'admin', 'dispatcher'), async (req, res) => {
   try {
     const { userId } = req.user;
-    const {
-      firstName,
-      lastName,
-      middleName,
-      dateOfBirth,
-      phone,
-      gender,
-      emergencyContactName,
-      emergencyContactPhone,
-      medicalNotes,
-      mobilityRequirements,
-      insuranceProvider,
-      insuranceNumber,
-      accountNumber,
-      rideAlone,
-      addressLabel,
-      landmark,
-      addressLine2,
-      clinicId,
-    } = req.body;
+    const body = req.body;
+
+    // Accept both camelCase and snake_case field names
+    const firstName = body.firstName || body.first_name;
+    const lastName = body.lastName || body.last_name;
+    const dateOfBirth = body.dateOfBirth || body.date_of_birth;
+    const phone = body.phone;
+    const accountNumber = body.accountNumber || body.account_number;
+    const serviceLevel = body.serviceLevel || body.service_level || body.mobilityType || 'ambulatory';
+    const notes = body.notes;
+    const clinicId = body.clinicId || body.clinic_id;
 
     // Validate required fields
     if (!firstName || !lastName) {
@@ -132,21 +113,11 @@ router.post('/', requireRole('superadmin', 'admin', 'dispatcher'), async (req, r
       .insert({
         first_name: firstName,
         last_name: lastName,
-        middle_name: middleName || null,
         date_of_birth: dateOfBirth || null,
         phone: phone || null,
-        gender: gender || null,
-        emergency_contact_name: emergencyContactName || null,
-        emergency_contact_phone: emergencyContactPhone || null,
-        medical_notes: medicalNotes || null,
-        mobility_requirements: mobilityRequirements || 'ambulatory',
-        insurance_provider: insuranceProvider || null,
-        insurance_number: insuranceNumber || null,
         account_number: accountNumber || null,
-        ride_alone: rideAlone || false,
-        address_label: addressLabel || null,
-        landmark: landmark || null,
-        address_line_2: addressLine2 || null,
+        service_level: serviceLevel,
+        notes: notes || null,
         clinic_id: patientClinicId,
       })
       .select()
@@ -183,25 +154,17 @@ router.put('/:id', requireRole('superadmin', 'admin', 'dispatcher'), async (req,
     const { userId } = req.user;
     const updates = req.body;
 
-    // Build update object
+    // Build update object (only columns that exist in DB)
     const patientUpdates = {};
     if (updates.firstName !== undefined) patientUpdates.first_name = updates.firstName;
     if (updates.lastName !== undefined) patientUpdates.last_name = updates.lastName;
-    if (updates.middleName !== undefined) patientUpdates.middle_name = updates.middleName;
     if (updates.dateOfBirth !== undefined) patientUpdates.date_of_birth = updates.dateOfBirth;
     if (updates.phone !== undefined) patientUpdates.phone = updates.phone;
-    if (updates.gender !== undefined) patientUpdates.gender = updates.gender;
-    if (updates.emergencyContactName !== undefined) patientUpdates.emergency_contact_name = updates.emergencyContactName;
-    if (updates.emergencyContactPhone !== undefined) patientUpdates.emergency_contact_phone = updates.emergencyContactPhone;
-    if (updates.medicalNotes !== undefined) patientUpdates.medical_notes = updates.medicalNotes;
-    if (updates.mobilityRequirements !== undefined) patientUpdates.mobility_requirements = updates.mobilityRequirements;
-    if (updates.insuranceProvider !== undefined) patientUpdates.insurance_provider = updates.insuranceProvider;
-    if (updates.insuranceNumber !== undefined) patientUpdates.insurance_number = updates.insuranceNumber;
     if (updates.accountNumber !== undefined) patientUpdates.account_number = updates.accountNumber;
-    if (updates.rideAlone !== undefined) patientUpdates.ride_alone = updates.rideAlone;
-    if (updates.addressLabel !== undefined) patientUpdates.address_label = updates.addressLabel;
-    if (updates.landmark !== undefined) patientUpdates.landmark = updates.landmark;
-    if (updates.addressLine2 !== undefined) patientUpdates.address_line_2 = updates.addressLine2;
+    if (updates.serviceLevel !== undefined) patientUpdates.service_level = updates.serviceLevel;
+    if (updates.mobilityType !== undefined) patientUpdates.service_level = updates.mobilityType;
+    if (updates.notes !== undefined) patientUpdates.notes = updates.notes;
+    if (updates.clinicId !== undefined) patientUpdates.clinic_id = updates.clinicId;
     patientUpdates.updated_at = new Date().toISOString();
 
     const { data, error } = await supabase
@@ -292,7 +255,7 @@ router.get('/search/:query', async (req, res) => {
     let dbQuery = supabase
       .from('patients')
       .select('*')
-      .or(`first_name.ilike.%${query}%,last_name.ilike.%${query}%,phone.ilike.%${query}%`)
+      .or(`first_name.ilike.%${query}%,last_name.ilike.%${query}%,phone.ilike.%${query}%,account_number.ilike.%${query}%`)
       .limit(20);
 
     // Filter by clinic for non-superadmin users

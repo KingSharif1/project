@@ -1,4 +1,4 @@
-import { supabase } from '../lib/supabase';
+import * as api from '../services/api';
 
 export type AuditEventType =
   | 'patient_viewed'
@@ -82,12 +82,9 @@ class HIPAAAuditLogger {
     this.buffer = [];
 
     try {
-      const { error } = await supabase
-        .from('audit_logs')
-        .insert(entriesToFlush);
-
-      if (error) {
-        console.error('Failed to flush audit logs:', error);
+      const result = await api.insertAuditLogs(entriesToFlush);
+      if (!result.success) {
+        console.error('Failed to flush audit logs');
         this.buffer.unshift(...entriesToFlush);
       }
     } catch (error) {
@@ -237,40 +234,13 @@ class HIPAAAuditLogger {
     endDate?: string;
     phiOnly?: boolean;
   }): Promise<AuditLogEntry[]> {
-    let query = supabase
-      .from('audit_logs')
-      .select('*')
-      .order('timestamp', { ascending: false })
-      .limit(1000);
-
-    if (filters?.userId) {
-      query = query.eq('user_id', filters.userId);
-    }
-
-    if (filters?.eventType) {
-      query = query.eq('event_type', filters.eventType);
-    }
-
-    if (filters?.startDate) {
-      query = query.gte('timestamp', filters.startDate);
-    }
-
-    if (filters?.endDate) {
-      query = query.lte('timestamp', filters.endDate);
-    }
-
-    if (filters?.phiOnly) {
-      query = query.eq('phi_accessed', true);
-    }
-
-    const { data, error } = await query;
-
-    if (error) {
+    try {
+      const result = await api.getAuditLogs(filters);
+      return result.data || [];
+    } catch (error) {
       console.error('Error fetching audit logs:', error);
       return [];
     }
-
-    return data || [];
   }
 }
 

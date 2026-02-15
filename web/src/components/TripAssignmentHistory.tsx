@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { History, User, Clock, UserCheck, Edit, XCircle, Plus } from 'lucide-react';
-import { supabase } from '../lib/supabase';
+import * as api from '../services/api';
 import { TripAssignmentHistory } from '../types';
 
 interface TripAssignmentHistoryProps {
@@ -19,14 +19,9 @@ export const TripAssignmentHistoryComponent: React.FC<TripAssignmentHistoryProps
 
   const loadDrivers = async () => {
     try {
-      const { data, error } = await supabase
-        .from('drivers')
-        .select('id, name');
-
-      if (error) throw error;
-
+      const result = await api.getDrivers();
       const driverMap: Record<string, string> = {};
-      (data || []).forEach(d => {
+      (result.data || []).forEach((d: any) => {
         driverMap[d.id] = d.name;
       });
       setDrivers(driverMap);
@@ -38,13 +33,8 @@ export const TripAssignmentHistoryComponent: React.FC<TripAssignmentHistoryProps
   const loadHistory = async () => {
     try {
       setIsLoading(true);
-      const { data, error } = await supabase
-        .from('trip_assignment_history')
-        .select('*')
-        .eq('trip_id', tripId)
-        .order('created_at', { ascending: false });
-
-      if (error) throw error;
+      const result = await api.getTripAssignmentHistory(tripId);
+      const data = result.data || [];
 
       const formattedHistory: TripAssignmentHistory[] = (data || []).map(record => ({
         id: record.id,

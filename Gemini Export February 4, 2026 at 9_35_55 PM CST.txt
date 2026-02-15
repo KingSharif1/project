@@ -1,0 +1,254 @@
+﻿The video (part1) is a discussion between two people, including a person named Sharif, about updates to a system for a transportation company.
+
+
+Updates and Features Discussed:
+* Super Admin Page: A super admin page was created, intended only for the speakers, to manage companies. It shows all companies, the number of admins or users they have, and if they have trips. New companies can be added on this page and an admin can be created for them. The super admin can also view and deactivate users, and reset passwords.
+* Login Page: The login page was updated to have separate logins for "admin" and "company".
+   * The super admin logs into the super admin page.
+   * The regular admin for a company (called "clinic" in the video, but refers to transportation companies) logs in through the admin login.
+   * A dispatcher logs in through the company admin.
+* User Management (Admin View):
+   * The admin page is where transportation companies' admins can manage users (admin and dispatcher).
+   * Admins can add a dispatcher or another admin.
+   * They can change names, update, or deactivate accounts.
+   * There is a feature to reset passwords for users.
+   * Admins can view all users, including the driver.
+   * Admins can add a driver, including details such as name, date of birth, email, mobile number, and driver's license number.
+   * The system allows users to upload documents like a driver's license and vehicle insurance, and reminders can be sent before an expiration date. However, an error was encountered when trying to add a driver during the video.
+* Rider/Passenger Management: This section is for adding customers, referred to as riders or passengers.
+   * The form for adding a rider originally included fields for first name, last name, mobile number, and account number.
+   * The account number could be used for insurance or similar purposes.
+   * The fields will be adjusted to remove age, duplicate phone number, email address, and the landmark field.
+   * There was confusion about having an "address" field, which the speaker intended to be the rider's home address. To avoid confusion, the address field for the rider will be removed.
+Trip and Invoice Discussions:
+* Trip Creation/Management: When creating a trip, the system allows for searching or creating a new rider.
+   * For multiple trips, each stop is supposed to have a pickup and drop-off address.
+   * The trip details include appointment time and pickup time.
+   * The system supports one-way, round, and multiple trips.
+* Facilities/Payers: The system can handle facilities, such as nursing homes and hospitals, and allow inputting their billing rate. The speaker noted that the platform currently only shows their main company, but will show other facilities once implemented.
+* Invoicing: The video mentions an invoice feature for private trips, where a customer can request an invoice.
+   * The speaker who developed the system was asked to remove the "passenger invoice" feature since the other speaker mostly works private trips.
+* Integration and Imports: The speakers discussed supporting various forms of payment, such as Medicaid broker, private pay, and facility contracts.
+   * The system needs to be able to import PDF files into trip management.
+   * The import feature needs to be adjusted for the specific format of the Excel file. The other speaker needs to get a new template for the Excel file to integrate it with the system.
+Business and Development Context:
+* The person who developed the system was encouraged to continue making progress and to treat the development like an IT company.
+* There is potential for government contracts, as the other speaker has a contract with the City of Fort Worth and a need for pit-tracking software was mentioned.
+* The developer was asked to work four hours every day to finish the system sooner so they could work on other projects.
+* The developer plans to start working on the mobile app as soon as the driver feature is fixed.
+Call/Meeting Interruption:
+* The meeting was running out of time.
+* The other speaker took a phone call during the meeting to discuss a $110 payment for an upcoming transportation service.
+* The video ends with the developer saying they will end the current meeting and send a new link.
+
+
+
+
+Sources:
+* part1 - Made with Clipchamp.mp4
+
+
+
+
+The video (part2) focuses on updates to a system, specifically concerning contractor management, driver payments, and the driver mobile application process. The speakers are updating the system for a transportation company.
+
+
+Contractor Management and Rates
+* The existing Facility Management feature will be removed and replaced with Contractor Management. The facility name will be changed to contractor name.
+* The information needed for contractors is the same as the previous facility details, including name, address, email, personal contact number, and rates.
+* Contractor rates must include pricing for:
+   * Ambulatory, wheelchair, and stretcher services.
+   * "From mile," "to mile," "rate," and an "additional rate" (or incremental rate).
+* The payment terms feature will be removed.
+* The contractor management will also include fields for cancellation fees and no-sale rates.
+* A dispatcher is not needed for the contractors.
+Driver Payments and Payout Calculation
+* The system will only focus on driver payout, and the passenger invoice and clinic invoice/payout features will be removed.
+* Driver rates will be set when adding a new driver. The driver's rate may differ based on the area they work, such as urban city versus a rural area.
+* The driver payout calculation will be based on the driver's contracted rate, not the contractor's rate.
+* The driver payout structure will be similar to the contractor rate structure, including rates for ambulatory, wheelchair, and stretcher services.
+* The driver payout will also include a feature for deductions.
+* The system needs to automatically generate the payout by allowing the user to select a date range, and the system will pull all relevant trips.
+Analysis and Reporting
+* The system needs an analysis section that uses both the contractor rate and the driver rate for calculations.
+* The analysis must allow the user to select a date range to view:
+   * Total revenue.
+   * Total payout.
+   * Profit.
+   * Number of completed trips.
+   * Number of "no show" trips.
+   * Top driver performance.
+Driver Mobile Application Process
+* The driver app's main menu will include Trip, Message, Vehicle, Profile (for documents), and Settings.
+* The app will allow drivers to view trips for "today" and "future" trips.
+* Drivers will receive a notification when a trip is assigned.
+* The sequence of a trip in the driver app is:
+   1. Assign.
+   2. In-route to pick up.
+   3. Arrive.
+   4. Signature (Passenger). This occurs between steps 3 and 4.
+   5. Passenger picked up/Departure.
+   6. In-route to drop off.
+   7. Arrive at destination.
+   8. Complete.
+* The system will track the time the driver arrives and when the passenger is picked up to track waiting time.
+* The app needs a GPS tracking feature similar to the "We Ride" system to show where the driver has been and how fast they were driving. This history should be downloadable as a PDF.
+* The speaker decided to remove the HIPPA compliance feature from the system.
+Business and Development Timeline
+* The system developer was encouraged to finish quickly to pursue other projects, including a potential contract with the City of Fort Worth.
+* The speakers agreed to meet every two days to check on the development progress.
+
+
+
+
+Sources:
+* video1726993345.mp4
+
+
+Here is a summary of the discussions across both videos, focusing on updates, additions, and removals for the transportation management system.System Updates and Changes
+Category
+	Component
+	Description of Change
+	Source
+	User/Admin Roles
+	Super Admin Page
+	Created to manage all companies, including adding new companies and creating an initial admin. The super admin can view, deactivate, and reset passwords for users.
+	
+
+	
+
+	Login Page
+	Updated to have separate logins for "admin" and "company."
+	
+
+	Entity Management
+	Facility Management
+	Removed and replaced with Contractor Management. The name "facility" will be changed to "contractor."
+	
+
+	
+
+	Contractor Management (New)
+	Will include the same details as the former facility management (name, address, email, contact number, and rates).
+	
+
+	
+
+	Dispatcher for Contractors
+	Removed the need for a dispatcher to be assigned to a contractor.
+	
+
+	
+
+	Rider/Passenger Form
+	Fields like age, duplicate phone number, email address, and the landmark field will be removed. The general "address" field will also be removed to avoid confusion.
+	
+
+	Invoicing & Payouts
+	Passenger Invoice
+	Removed from the system.
+	
+
+	
+
+	Clinic/Facility Invoice/Payout
+	Removed from the system.
+	
+
+	
+
+	Payment Terms
+	Removed from the system.
+	
+
+	
+
+	System Focus
+	Shifted to exclusively focus on Driver Payout.
+	
+
+	Trip & Rider Features
+	HIPAA Compliance
+	Removed from the system.
+	
+
+	Feature Additions and Implementation Details
+Component
+	Details to be Implemented
+	Source
+	Driver Management
+	Driver Add Feature: Allows adding drivers with details like name, date of birth, email, mobile number, and driver's license number.
+	
+
+	
+
+	Document Uploads: Drivers can upload documents like driver's licenses and vehicle insurance, with reminders sent before expiration.
+	
+
+	Contractor Rates
+	Rate Structure: Must include pricing for ambulatory, wheelchair, and stretcher services, with "from mile," "to mile," a "rate," and an "additional rate" (incremental rate).
+	
+
+	
+
+	Fees: Include cancellation fees and no-sale rates.
+	
+
+	Driver Payouts
+	Rates: Driver rates will be set when adding a new driver and can be different based on the working area (e.g., urban city vs. rural area).
+	
+
+	
+
+	Payout Structure: Must align with the contractor rate structure (ambulatory, wheelchair, stretcher rates, from mile, to mile, rate, and additional rate).
+	
+
+	
+
+	Deductions: Drivers will have a deduction feature.
+	
+
+	
+
+	Automation: The system must automatically generate the payout by selecting a date range, pulling all relevant trips, and calculating the payout based on the driver's rate.
+	
+
+	Analysis/Reporting
+	Report Generation: Analysis will use both contractor and driver rates to show: total revenue, total payout, profit, number of completed trips, number of "no show" trips, and top driver performance. Users must be able to select a date range.
+	
+
+	Driver App (Mobile)
+	Main Menu: Will include Trip, Message, Vehicle, Profile (for documents), and Settings.
+	
+
+	
+
+	Trip View: Drivers can view "today" and "future" trips and receive a notification when a trip is assigned.
+	
+
+	
+
+	Trip Sequence: The updated steps are: Assign > In-route to pick up > Arrive > Signature (Passenger, between 3 and 4) > Passenger picked up/Departure > In-route to drop off > Arrive at destination > Complete.
+	
+
+	
+
+	GPS Tracking: The app needs a GPS tracking feature to record driver location and speed (similar to the "We Ride" system).
+	
+
+	
+
+	History: GPS tracking history should be downloadable as a PDF.
+	
+
+	
+
+	Wait Time: The system must track the time of arrival and the time of pickup to calculate waiting time.
+	
+
+	
+
+
+
+Sources:
+* video1726993345.mp4

@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import {
   X, User, FileText, History, TrendingUp, DollarSign, Activity, Shield,
   Car, Heart, Clipboard, Calendar, MapPin, Star, Award, Clock, Phone,
@@ -7,8 +7,8 @@ import {
   CreditCard, Package, Settings, Bell, Plus, Tag, Folder, Paperclip
 } from 'lucide-react';
 import { StatusBadge } from './StatusBadge';
-import { PhotoUpload } from './PhotoUpload';
-import { DriverRateConfig } from './DriverRateConfig';
+import { DriverRateTiers } from './DriverRateTiers';
+import * as api from '../services/api';
 
 interface DriverProfilePageProps {
   driver: any;
@@ -57,24 +57,42 @@ export const DriverProfilePage: React.FC<DriverProfilePageProps> = ({
   });
 
   const [documents, setDocuments] = useState({
-    licenseExpiry: driver.licenseExpiry || '',
-    certificationExpiry: driver.certificationExpiry || '',
-    insuranceExpiry: driver.insurance_expiry_date || '',
-    registrationExpiry: driver.registration_expiry_date || '',
-    medicalCertExpiry: driver.medical_cert_expiry_date || '',
-    backgroundCheckExpiry: driver.background_check_expiry_date || ''
+    driver_license: '',
+    driver_certification: '',
+    vehicle_insurance: '',
+    vehicle_registration: '',
+    medical_cert: '',
+    background_check: ''
   });
 
   const [uploadedFiles, setUploadedFiles] = useState<{[key: string]: File | null}>({
-    licenseExpiry: null,
-    certificationExpiry: null,
-    insuranceExpiry: null,
-    registrationExpiry: null,
-    medicalCertExpiry: null,
-    backgroundCheckExpiry: null
+    driver_license: null,
+    driver_certification: null,
+    vehicle_insurance: null,
+    vehicle_registration: null,
+    medical_cert: null,
+    background_check: null
   });
 
   const [uploadStatus, setUploadStatus] = useState<{[key: string]: 'idle' | 'uploading' | 'success' | 'error'}>({});
+
+  // Fetched document submissions from DB
+  const [docSubmissions, setDocSubmissions] = useState<any[]>([]);
+
+  const fetchDocSubmissions = useCallback(async () => {
+    try {
+      const result = await api.getDriverDocuments(driver.id);
+      if (result.success) {
+        setDocSubmissions(result.data || []);
+      }
+    } catch (err) {
+      console.error('Failed to fetch driver documents:', err);
+    }
+  }, [driver.id]);
+
+  useEffect(() => {
+    fetchDocSubmissions();
+  }, [fetchDocSubmissions]);
 
   // Custom documents system
   interface CustomDocument {
@@ -271,14 +289,8 @@ export const DriverProfilePage: React.FC<DriverProfilePageProps> = ({
   };
 
   const handleSaveDocuments = () => {
-    onUpdateDriver(driver.id, {
-      licenseExpiry: documents.licenseExpiry,
-      certificationExpiry: documents.certificationExpiry,
-      insurance_expiry_date: documents.insuranceExpiry,
-      registration_expiry_date: documents.registrationExpiry,
-      medical_cert_expiry_date: documents.medicalCertExpiry,
-      background_check_expiry_date: documents.backgroundCheckExpiry
-    });
+    // Document expiry dates are now tracked in document_submissions table, not on the driver record
+    console.log('Document dates are managed via document_submissions table');
   };
 
   const handleSendMessage = () => {
@@ -303,70 +315,93 @@ export const DriverProfilePage: React.FC<DriverProfilePageProps> = ({
     setUploadStatus(prev => ({ ...prev, [key]: 'uploading' }));
 
     try {
-      // In a real implementation, you would upload to Supabase Storage
-      // For now, we'll simulate the upload
-      await new Promise(resolve => setTimeout(resolve, 1500));
+      // Upload file via backend (uses service role key)
+      const filePath = `${driver.id}/${key}/${Date.now()}_${file.name}`;
+      const uploadResult = await api.uploadFileToStorage('driver-documents', filePath, file);
+
+      // Save document record to document_submissions table via API
+      await api.uploadDriverDocument(driver.id, {
+        documentType: key,
+        fileName: file.name,
+        fileUrl: uploadResult.filePath,
+        fileSize: file.size,
+      });
 
       setUploadStatus(prev => ({ ...prev, [key]: 'success' }));
+      setUploadedFiles(prev => ({ ...prev, [key]: null }));
 
-      // Show success message
+      // Refresh document submissions so the View button appears
+      await fetchDocSubmissions();
+
       setTimeout(() => {
         setUploadStatus(prev => ({ ...prev, [key]: 'idle' }));
       }, 2000);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Upload error:', error);
       setUploadStatus(prev => ({ ...prev, [key]: 'error' }));
     }
   };
 
+  // Helper: find the latest submission for a given document type
+  const getSubmission = (docType: string) =>
+    docSubmissions.find(s => s.document_type === docType);
+
+  const handleViewDocument = async (fileUrl: string) => {
+    try {
+      const signedUrl = await api.getSignedUrl('driver-documents', fileUrl);
+      window.open(signedUrl, '_blank');
+    } catch (err) {
+      console.error('Failed to get signed URL:', err);
+      alert('Could not open document. Please try again.');
+    }
+  };
+
+  const handleDeleteDocument = async (docId: string) => {
+    if (!confirm('Delete this document?')) return;
+    try {
+      await api.deleteDriverDocument(driver.id, docId);
+      await fetchDocSubmissions();
+    } catch (err) {
+      console.error('Failed to delete document:', err);
+    }
+  };
+
   const documentList = [
     {
-      key: 'licenseExpiry',
+      key: 'driver_license',
       label: 'Driver License',
       icon: Shield,
       color: 'blue',
-      date: documents.licenseExpiry,
-      dbField: 'license_url'
     },
     {
-      key: 'insuranceExpiry',
+      key: 'vehicle_insurance',
       label: 'Vehicle Insurance',
       icon: FileText,
       color: 'green',
-      date: documents.insuranceExpiry,
-      dbField: 'insurance_url'
     },
     {
-      key: 'registrationExpiry',
+      key: 'vehicle_registration',
       label: 'Vehicle Registration',
       icon: Car,
       color: 'purple',
-      date: documents.registrationExpiry,
-      dbField: 'registration_url'
     },
     {
-      key: 'medicalCertExpiry',
+      key: 'medical_cert',
       label: 'Medical Certification',
       icon: Heart,
       color: 'red',
-      date: documents.medicalCertExpiry,
-      dbField: 'medical_cert_url'
     },
     {
-      key: 'certificationExpiry',
+      key: 'driver_certification',
       label: 'Driver Certification',
       icon: Award,
       color: 'indigo',
-      date: documents.certificationExpiry,
-      dbField: 'certification_url'
     },
     {
-      key: 'backgroundCheckExpiry',
+      key: 'background_check',
       label: 'Background Check',
       icon: Clipboard,
       color: 'amber',
-      date: documents.backgroundCheckExpiry,
-      dbField: 'background_check_url'
     }
   ];
 
@@ -578,9 +613,9 @@ export const DriverProfilePage: React.FC<DriverProfilePageProps> = ({
                     </div>
 
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">License Expiry</label>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">License Number</label>
                       <p className="text-gray-900 font-medium">
-                        {driver.licenseExpiry ? new Date(driver.licenseExpiry).toLocaleDateString() : 'Not set'}
+                        {driver.licenseNumber || 'Not set'}
                       </p>
                     </div>
 
@@ -735,28 +770,9 @@ export const DriverProfilePage: React.FC<DriverProfilePageProps> = ({
                     <Eye className="w-4 h-4" />
                   </button>
                 </div>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                  {[
-                    { label: 'License', date: documents.licenseExpiry, icon: Shield },
-                    { label: 'Insurance', date: documents.insuranceExpiry, icon: FileText },
-                    { label: 'Medical', date: documents.medicalCertExpiry, icon: Heart },
-                    { label: 'Registration', date: documents.registrationExpiry, icon: Car }
-                  ].map((doc) => {
-                    const status = getDocumentStatus(doc.date);
-                    const Icon = doc.icon;
-                    return (
-                      <div key={doc.label} className="bg-white rounded-lg p-3 border border-gray-200">
-                        <div className="flex items-center space-x-2 mb-2">
-                          <Icon className="w-4 h-4 text-gray-600" />
-                          <span className="text-sm font-medium text-gray-900">{doc.label}</span>
-                        </div>
-                        <span className={`text-xs px-2 py-1 rounded-full ${status.color}`}>
-                          {status.label}
-                        </span>
-                      </div>
-                    );
-                  })}
-                </div>
+                <p className="text-sm text-gray-600">
+                  Go to the Documents tab to upload and manage driver documents.
+                </p>
               </div>
 
               {/* Performance Summary */}
@@ -982,142 +998,124 @@ export const DriverProfilePage: React.FC<DriverProfilePageProps> = ({
                   <div>
                     <h3 className="font-semibold text-blue-900 mb-1">Document Management</h3>
                     <p className="text-sm text-blue-700">
-                      Upload and track all required documents and their expiration dates for compliance.
+                      Upload all required driver documents for compliance.
                     </p>
                   </div>
                 </div>
               </div>
 
-              <div className="space-y-4">
+              <div className="space-y-3">
                 {documentList.map(doc => {
                   const Icon = doc.icon;
-                  const status = getDocumentStatus(doc.date);
-                  const StatusIcon = status.icon;
+                  const submission = getSubmission(doc.key);
+                  const hasDoc = submission && !submission.file_url?.startsWith('pending://');
 
                   return (
-                    <div key={doc.key} className="bg-white border border-gray-200 rounded-lg p-5 hover:shadow-md transition-shadow">
-                      <div className="flex items-center justify-between mb-4">
+                    <div key={doc.key} className={`bg-white rounded-xl border-2 transition-all hover:shadow-md ${hasDoc ? 'border-green-200' : 'border-gray-200'}`}>
+                      {/* Card Header */}
+                      <div className="flex items-center justify-between px-5 py-3">
                         <div className="flex items-center space-x-3">
-                          <div className={`p-3 bg-${doc.color}-100 rounded-lg`}>
-                            <Icon className={`w-6 h-6 text-${doc.color}-600`} />
+                          <div className={`p-2 rounded-lg ${hasDoc ? 'bg-green-100' : `bg-${doc.color}-100`}`}>
+                            <Icon className={`w-5 h-5 ${hasDoc ? 'text-green-600' : `text-${doc.color}-600`}`} />
                           </div>
                           <div>
-                            <h4 className="font-semibold text-gray-900 text-lg">{doc.label}</h4>
-                            {doc.date && (
-                              <p className="text-sm text-gray-600">
-                                Expires: {new Date(doc.date).toLocaleDateString('en-US', {
-                                  year: 'numeric',
-                                  month: 'long',
-                                  day: 'numeric'
-                                })}
-                              </p>
+                            <h4 className="font-semibold text-gray-900 text-sm">{doc.label}</h4>
+                            {hasDoc && (
+                              <p className="text-xs text-gray-500">{submission.file_name}</p>
                             )}
                           </div>
                         </div>
-                        <div className="flex items-center space-x-2">
-                          <StatusIcon className="w-5 h-5" />
-                          <span className={`px-3 py-1.5 rounded-full text-sm font-semibold ${status.color}`}>
-                            {status.label}
-                          </span>
-                        </div>
-                      </div>
-
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-2">
-                            Expiration Date
-                          </label>
-                          <input
-                            type="date"
-                            value={doc.date}
-                            onChange={(e) => setDocuments({ ...documents, [doc.key]: e.target.value })}
-                            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-2">
-                            Upload Document
-                          </label>
-                          <div className="flex space-x-2">
-                            <label className="flex-1 px-4 py-2 bg-gray-100 border border-gray-300 rounded-lg hover:bg-gray-200 transition-colors flex items-center justify-center space-x-2 cursor-pointer">
-                              <input
-                                type="file"
-                                accept=".pdf,.jpg,.jpeg,.png,.doc,.docx"
-                                onChange={(e) => handleFileSelect(doc.key, e.target.files?.[0] || null)}
-                                className="hidden"
-                              />
-                              <Upload className="w-4 h-4" />
-                              <span className="text-sm">
-                                {uploadedFiles[doc.key] ? uploadedFiles[doc.key]?.name : 'Choose File'}
+                        <div className="flex items-center gap-2">
+                          {hasDoc ? (
+                            <>
+                              <span className="text-xs text-green-700 bg-green-100 px-2.5 py-1 rounded-full font-medium flex items-center gap-1">
+                                <CheckCircle className="w-3 h-3" /> Uploaded
                               </span>
-                            </label>
-                            {uploadedFiles[doc.key] && (
-                              <button
-                                onClick={() => handleUploadDocument(doc.key)}
-                                disabled={uploadStatus[doc.key] === 'uploading'}
-                                className={`px-4 py-2 rounded-lg font-medium transition-colors flex items-center space-x-1 ${
-                                  uploadStatus[doc.key] === 'uploading'
-                                    ? 'bg-gray-400 text-white cursor-not-allowed'
-                                    : uploadStatus[doc.key] === 'success'
-                                    ? 'bg-green-600 text-white'
-                                    : uploadStatus[doc.key] === 'error'
-                                    ? 'bg-red-600 text-white'
-                                    : 'bg-blue-600 text-white hover:bg-blue-700'
-                                }`}
-                              >
-                                {uploadStatus[doc.key] === 'uploading' && (
-                                  <>
-                                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                                    <span className="text-xs">Uploading...</span>
-                                  </>
-                                )}
-                                {uploadStatus[doc.key] === 'success' && (
-                                  <>
-                                    <CheckCircle className="w-4 h-4" />
-                                    <span className="text-xs">Uploaded</span>
-                                  </>
-                                )}
-                                {uploadStatus[doc.key] === 'error' && (
-                                  <>
-                                    <XCircle className="w-4 h-4" />
-                                    <span className="text-xs">Failed</span>
-                                  </>
-                                )}
-                                {uploadStatus[doc.key] !== 'uploading' && uploadStatus[doc.key] !== 'success' && uploadStatus[doc.key] !== 'error' && (
-                                  <>
-                                    <Upload className="w-4 h-4" />
-                                    <span className="text-xs">Upload</span>
-                                  </>
-                                )}
-                              </button>
-                            )}
-                          </div>
-                          {uploadedFiles[doc.key] && (
-                            <p className="text-xs text-gray-500 mt-1">
-                              Size: {(uploadedFiles[doc.key]!.size / 1024).toFixed(1)} KB
-                            </p>
+                              <span className="text-xs text-gray-400">
+                                {new Date(submission.submission_date).toLocaleDateString()}
+                              </span>
+                            </>
+                          ) : (
+                            <span className="text-xs text-orange-600 bg-orange-50 px-2.5 py-1 rounded-full font-medium flex items-center gap-1">
+                              <AlertTriangle className="w-3 h-3" /> Missing
+                            </span>
                           )}
                         </div>
                       </div>
 
-                      {/* Show existing document if available */}
-                      {(driver as any)[doc.dbField] && (
-                        <div className="mt-3 pt-3 border-t border-gray-200">
-                          <div className="flex items-center justify-between">
-                            <div className="flex items-center space-x-2 text-sm text-gray-600">
-                              <FileText className="w-4 h-4" />
-                              <span>Current document on file</span>
-                            </div>
-                            <button
-                              onClick={() => window.open((driver as any)[doc.dbField], '_blank')}
-                              className="text-blue-600 hover:text-blue-700 text-sm font-medium flex items-center space-x-1"
-                            >
-                              <Eye className="w-4 h-4" />
-                              <span>View</span>
-                            </button>
-                          </div>
+                      {/* Existing Document Actions */}
+                      {hasDoc && (
+                        <div className="px-5 pb-3 flex items-center gap-2">
+                          <button
+                            onClick={() => handleViewDocument(submission.file_url)}
+                            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-blue-700 bg-blue-50 rounded-lg hover:bg-blue-100 transition-colors"
+                          >
+                            <Eye className="w-3.5 h-3.5" />
+                            View
+                          </button>
+                          <button
+                            onClick={() => handleDeleteDocument(submission.id)}
+                            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-red-600 bg-red-50 rounded-lg hover:bg-red-100 transition-colors"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                            Delete
+                          </button>
                         </div>
                       )}
+
+                      {/* Upload Area */}
+                      <div className="px-5 pb-4">
+                        {uploadedFiles[doc.key] ? (
+                          <div className="flex items-center gap-2 bg-blue-50 border border-blue-200 rounded-lg px-3 py-2">
+                            <FileText className="w-4 h-4 text-blue-600 flex-shrink-0" />
+                            <span className="text-xs text-blue-800 truncate flex-1">{uploadedFiles[doc.key]?.name}</span>
+                            <span className="text-xs text-blue-500">{(uploadedFiles[doc.key]!.size / 1024).toFixed(1)} KB</span>
+                            <button
+                              onClick={() => handleUploadDocument(doc.key)}
+                              disabled={uploadStatus[doc.key] === 'uploading'}
+                              className={`px-3 py-1 rounded-md text-xs font-semibold transition-colors flex items-center gap-1 ${
+                                uploadStatus[doc.key] === 'uploading'
+                                  ? 'bg-gray-400 text-white cursor-not-allowed'
+                                  : uploadStatus[doc.key] === 'success'
+                                  ? 'bg-green-600 text-white'
+                                  : uploadStatus[doc.key] === 'error'
+                                  ? 'bg-red-600 text-white'
+                                  : 'bg-blue-600 text-white hover:bg-blue-700'
+                              }`}
+                            >
+                              {uploadStatus[doc.key] === 'uploading' && (
+                                <><div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin"></div> Uploading</>
+                              )}
+                              {uploadStatus[doc.key] === 'success' && (
+                                <><CheckCircle className="w-3 h-3" /> Done</>
+                              )}
+                              {uploadStatus[doc.key] === 'error' && (
+                                <><XCircle className="w-3 h-3" /> Failed</>
+                              )}
+                              {!uploadStatus[doc.key] || uploadStatus[doc.key] === 'idle' ? (
+                                <><Upload className="w-3 h-3" /> Upload</>
+                              ) : null}
+                            </button>
+                            <button
+                              onClick={() => setUploadedFiles(prev => ({ ...prev, [doc.key]: null }))}
+                              className="text-gray-400 hover:text-red-500"
+                            >
+                              <XCircle className="w-4 h-4" />
+                            </button>
+                          </div>
+                        ) : (
+                          <label className="flex items-center justify-center gap-2 px-4 py-2.5 border-2 border-dashed border-gray-300 rounded-lg cursor-pointer hover:border-blue-400 hover:bg-blue-50/50 transition-all text-xs text-gray-500">
+                            <Upload className="w-4 h-4" />
+                            <span>{hasDoc ? 'Replace with new file' : 'Choose file to upload'}</span>
+                            <input
+                              type="file"
+                              accept=".pdf,.jpg,.jpeg,.png,.doc,.docx"
+                              onChange={(e) => handleFileSelect(doc.key, e.target.files?.[0] || null)}
+                              className="hidden"
+                            />
+                          </label>
+                        )}
+                      </div>
                     </div>
                   );
                 })}
@@ -1511,7 +1509,7 @@ export const DriverProfilePage: React.FC<DriverProfilePageProps> = ({
               </div>
 
               {/* Rate Configuration - New Dynamic Component */}
-              <DriverRateConfig driverId={driver.id} driverName={driver.name} />
+              <DriverRateTiers driverId={driver.id} onClose={() => {}} />
             </div>
           )}
 

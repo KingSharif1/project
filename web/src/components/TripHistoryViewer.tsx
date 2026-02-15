@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Play, Pause, RotateCcw, MapPin, Clock, Navigation, Gauge, Calendar, X } from 'lucide-react';
-import { supabase } from '../lib/supabase';
+import * as api from '../services/api';
 import { loadGoogleMaps } from '../utils/googleMapsLoader';
 import { Trip } from '../types';
 
@@ -96,27 +96,15 @@ export const TripHistoryViewer: React.FC<TripHistoryViewerProps> = ({ trip, onCl
     try {
       setLoading(true);
 
-      // Get route summary
-      const { data: routeData, error: routeError } = await supabase
-        .from('trip_routes_with_details')
-        .select('*')
-        .eq('trip_id', trip.id)
-        .single();
+      // Get route summary and location history via backend API
+      const result = await api.getTripRoute(trip.id);
 
-      if (routeError) {
-        console.error('Error loading route data:', routeError);
-      } else {
-        setRouteData(routeData);
+      if (result.data?.route) {
+        setRouteData(result.data.route);
       }
 
-      // Get location history
-      const { data: locationData, error: locationError } = await supabase
-        .rpc('get_trip_route', { p_trip_id: trip.id });
-
-      if (locationError) {
-        console.error('Error loading location history:', locationError);
-      } else if (locationData && locationData.length > 0) {
-        setLocationPoints(locationData);
+      if (result.data?.locations && result.data.locations.length > 0) {
+        setLocationPoints(result.data.locations);
       } else {
         console.log('No location history found for this trip');
       }

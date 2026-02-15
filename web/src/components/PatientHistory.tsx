@@ -20,12 +20,13 @@ export const PatientHistory: React.FC<PatientHistoryProps> = ({
   onClose,
 }) => {
   const patientTrips = useMemo(() => {
+    if (!patientName) return [];
     return trips
       .filter(t =>
-        t.customerName.toLowerCase().includes(patientName.toLowerCase()) ||
+        (t.customerName || '').toLowerCase().includes(patientName.toLowerCase()) ||
         (patientPhone && t.customerPhone === patientPhone)
       )
-      .sort((a, b) => new Date(b.scheduledTime).getTime() - new Date(a.scheduledTime).getTime());
+      .sort((a, b) => new Date(b.scheduledTime || 0).getTime() - new Date(a.scheduledTime || 0).getTime());
   }, [trips, patientName, patientPhone]);
 
   const stats = useMemo(() => {
@@ -205,7 +206,7 @@ export const PatientHistory: React.FC<PatientHistoryProps> = ({
                   </div>
                   <div className="flex items-center justify-between pt-2 border-t">
                     <span className="text-gray-600">{trip.serviceLevel}</span>
-                    <span className="font-semibold text-gray-900">${trip.fare.toFixed(2)}</span>
+                    <span className="font-semibold text-gray-900">${(trip.fare || 0).toFixed(2)}</span>
                   </div>
                 </div>
               </div>

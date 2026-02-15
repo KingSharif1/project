@@ -1,0 +1,125 @@
+4ZGC3d3DnVKv - admin1@fwmc.com
+Password@123
+
+DMAWre%WmMA5
+
+Password123
+
+Certainly! Since you're setting up a **TransportHub** portal, it's helpful to have a mix of facility types (Hospitals, Nursing Homes, and Dialysis Centers) to test how your billing tiers and service levels (Ambulatory, Wheelchair, Stretcher) function.
+
+Here are three distinct profiles you can use for testing:
+
+### 1. The High-Volume Hospital
+
+**Best for:** Testing multiple billing tiers and high-mileage additional rates.
+
+* **Contractor Name:** Riverview Regional Medical Center
+* **Address:** 1200 Healthcare Plaza, Springfield, IL 62704
+* **Phone:** 555-0122 | **Contact:** Sarah Jenkins (Discharge Coordinator)
+* **Billing Strategy:**
+* **Ambulatory:** $30 (0–5 miles), $50 (5–15 miles), $2.50/mile after.
+* **Wheelchair:** $55 (0–5 miles), $85 (5–15 miles), $3.75/mile after.
+* **Stretcher:** $150 flat + $5.00/mile.
+
+
+* **Cancellation/No-Show:** $25.00
+
+---
+
+### 2. The Local Nursing Home
+
+**Best for:** Testing flat rates or very short-distance "community" pricing.
+
+* **Contractor Name:** Maplewood Senior Living
+* **Address:** 450 Oak Lane, Springfield, IL 62702
+* **Phone:** 555-0199 | **Contact:** Mark Stevenson
+* **Billing Strategy:**
+* **Ambulatory:** $25 flat (under 10 miles), $2.00/mile after.
+* **Wheelchair:** $45 flat (under 10 miles), $3.00/mile after.
+* **Stretcher:** $125 flat.
+
+
+* **Cancellation/No-Show:** $15.00
+
+---
+
+### 3. The Specialized Clinic (Dialysis)
+
+**Best for:** Testing recurring logic (if applicable) and standard wheelchair transport.
+
+* **Contractor Name:** ClearStream Dialysis Center
+* **Address:** 888 Medical Center Dr, Suite 4, Springfield, IL 62703
+* **Phone:** 555-0155 | **Contact:** Reception Desk
+* **Billing Strategy:**
+* **Ambulatory:** $20 base + $1.50/mile.
+* **Wheelchair:** $40 base + $2.50/mile.
+* **Stretcher:** N/A (or $200 high-entry rate to discourage use).
+
+
+* **Cancellation/No-Show:** $50.00 (Strict policy for missed chairs).
+
+----------------------------------------------------------------------------------------------------------------------------------------------
+To help you test the **TransportHub Management Portal**, I’ve put together three distinct testing scenarios. These will help you verify that different trip classifications, service levels, and billing accounts are processing correctly.
+
+### Scenario 1: Standard Medical Appointment (Ambulatory)
+
+Use this to test a basic, one-way medical transport for a high-frequency client.
+
+* **Rider Name:** John Doe
+* **DOB:** 05/12/1975
+* **Phone:** (555) 123-4567
+* **Client Account:** Riverview Regional Medical Center
+* **Trip Classification:** Doctor Appointment
+* **Level of Service:** Ambulatory
+* **Pickup Address:** 123 Maple Ave, Fort Worth, TX 76102
+* **Drop-off Address:** 800 8th Ave, Fort Worth, TX 76104 (Medical District)
+* **Pickup Time:** 09:30 AM
+* **Appt Time:** 10:15 AM
+
+---
+
+### Scenario 2: Specialized Discharge (Wheelchair)
+
+Use this to test the "Wheelchair" service level and "Discharge" classification.
+
+* **Rider Name:** Sarah Jenkins
+* **DOB:** 11/22/1948
+* **Phone:** (555) 987-6543
+* **Client Account:** Riverview Regional Medical Center
+* **Trip Classification:** Discharge
+* **Level of Service:** Wheelchair
+* **Assistance Level:** Door-to-Door
+* **Pickup Address:** 1612 Summit Ave, Fort Worth, TX 76102
+* **Drop-off Address:** 4501 Heritage Trace Pkwy, Fort Worth, TX 76244
+* **Pickup Time:** 02:00 PM
+* **Appt Time:** Will Call (Check the "Will Call" box)
+
+---
+
+### Scenario 3: Social Services Transport (RAPP/BH)
+
+Use this to test specific internal classifications like "BH" (Behavioral Health) or "RAPP."
+
+* **Rider Name:** Alex Rivera
+* **DOB:** 08/15/1990
+* **Phone:** (555) 444-5566
+* **Client Account:** Riverview Regional Medical Center
+* **Trip Classification:** BH (Behavioral Health)
+* **Level of Service:** Ambulatory
+* **Facility Code:** 5590
+* **Pickup Address:** 1500 E Lancaster Ave, Fort Worth, TX 76102
+* **Drop-off Address:** 1350 E Lancaster Ave, Fort Worth, TX 76102
+* **Pickup Time:** 11:00 AM
+* **Notes:** Rider requires front-seat preference; no radio.
+
+---
+
+### Pro-Tips for Testing:
+
+* **Mileage Calculation:** Once you enter the addresses, be sure to click the **[Calculate Mileage]** button to see if the Google Maps integration (if active) populates the miles automatically.
+* **Smart Auto-Assign:** After creating these, you can try the **[Smart Auto-Assign]** button on the main list to see if the system matches these trips to your available drivers.
+
+**Would you like me to generate some "Driver" test data so you can practice the assignment workflow next?**
+
+
+

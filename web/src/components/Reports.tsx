@@ -46,8 +46,8 @@ export const Reports: React.FC = () => {
     });
 
     const completedTrips = filteredTrips.filter(trip => trip.status === 'completed');
-    const totalRevenue = completedTrips.reduce((sum, trip) => sum + trip.fare, 0);
-    const totalDistance = completedTrips.reduce((sum, trip) => sum + trip.distance, 0);
+    const totalRevenue = completedTrips.reduce((sum, trip) => sum + (trip.fare || 0), 0);
+    const totalDistance = completedTrips.reduce((sum, trip) => sum + (trip.distance || 0), 0);
     const avgFare = completedTrips.length > 0 ? totalRevenue / completedTrips.length : 0;
     const avgDistance = completedTrips.length > 0 ? totalDistance / completedTrips.length : 0;
 
@@ -62,15 +62,15 @@ export const Reports: React.FC = () => {
 
     const cancelledRevenue = filteredTrips
       .filter(t => t.status === 'cancelled')
-      .reduce((sum, trip) => sum + trip.fare, 0);
+      .reduce((sum, trip) => sum + (trip.fare || 0), 0);
 
     const noShowRevenue = filteredTrips
       .filter(t => t.status === 'no-show')
-      .reduce((sum, trip) => sum + trip.fare, 0);
+      .reduce((sum, trip) => sum + (trip.fare || 0), 0);
 
     const driverStats = drivers.map(driver => {
       const driverTrips = completedTrips.filter(trip => trip.driverId === driver.id);
-      const revenue = driverTrips.reduce((sum, trip) => sum + trip.fare, 0);
+      const revenue = driverTrips.reduce((sum, trip) => sum + (trip.fare || 0), 0);
       return {
         id: driver.id,
         name: driver.name,
@@ -346,9 +346,9 @@ export const Reports: React.FC = () => {
             </div>
           </div>
           <p className="text-sm font-medium text-gray-600 mb-1">Total Revenue</p>
-          <p className="text-3xl font-bold text-gray-900">${analytics.totalRevenue.toFixed(2)}</p>
+          <p className="text-3xl font-bold text-gray-900">${(analytics.totalRevenue || 0).toFixed(2)}</p>
           <p className="text-sm text-gray-600 mt-2">
-            Avg: ${analytics.avgFare.toFixed(2)}
+            Avg: ${(analytics.avgFare || 0).toFixed(2)}
           </p>
         </div>
 
@@ -372,9 +372,9 @@ export const Reports: React.FC = () => {
             </div>
           </div>
           <p className="text-sm font-medium text-gray-600 mb-1">Total Distance</p>
-          <p className="text-3xl font-bold text-gray-900">{analytics.totalDistance.toFixed(1)}</p>
+          <p className="text-3xl font-bold text-gray-900">{(analytics.totalDistance || 0).toFixed(1)}</p>
           <p className="text-sm text-gray-600 mt-2">
-            Avg: {analytics.avgDistance.toFixed(1)} mi
+            Avg: {(analytics.avgDistance || 0).toFixed(1)} mi
           </p>
         </div>
       </div>
@@ -383,7 +383,7 @@ export const Reports: React.FC = () => {
         <div className="flex items-center justify-between mb-6">
           <div>
             <h2 className="text-2xl font-bold text-gray-900 mb-1">Billing Summary</h2>
-            <p className="text-sm text-gray-600">Financial overview for facility payment</p>
+            <p className="text-sm text-gray-600">Financial overview for contractor payment</p>
           </div>
           <div className="px-4 py-2 bg-blue-600 text-white rounded-lg font-semibold text-sm">
             {timeRange === 'custom' && dateRange.start && dateRange.end
@@ -406,7 +406,7 @@ export const Reports: React.FC = () => {
             </div>
             <p className="text-sm font-semibold text-gray-700 mb-1">Completed Trips</p>
             <div className="flex items-baseline space-x-1">
-              <p className="text-lg font-bold text-green-600">${analytics.totalRevenue.toFixed(2)}</p>
+              <p className="text-lg font-bold text-green-600">${(analytics.totalRevenue || 0).toFixed(2)}</p>
               <p className="text-xs text-gray-500">revenue</p>
             </div>
           </div>
@@ -424,7 +424,7 @@ export const Reports: React.FC = () => {
             </div>
             <p className="text-sm font-semibold text-gray-700 mb-1">Cancelled Trips</p>
             <div className="flex items-baseline space-x-1">
-              <p className="text-lg font-bold text-red-600">${analytics.cancelledRevenue.toFixed(2)}</p>
+              <p className="text-lg font-bold text-red-600">${(analytics.cancelledRevenue || 0).toFixed(2)}</p>
               <p className="text-xs text-gray-500">lost revenue</p>
             </div>
           </div>
@@ -442,7 +442,7 @@ export const Reports: React.FC = () => {
             </div>
             <p className="text-sm font-semibold text-gray-700 mb-1">No-Show Trips</p>
             <div className="flex items-baseline space-x-1">
-              <p className="text-lg font-bold text-orange-600">${analytics.noShowRevenue.toFixed(2)}</p>
+              <p className="text-lg font-bold text-orange-600">${(analytics.noShowRevenue || 0).toFixed(2)}</p>
               <p className="text-xs text-gray-500">billable*</p>
             </div>
           </div>
@@ -458,7 +458,7 @@ export const Reports: React.FC = () => {
             </div>
             <p className="text-sm font-semibold text-gray-700 mb-1">Total Billable</p>
             <div className="flex items-baseline space-x-1">
-              <p className="text-lg font-bold text-blue-600">${(analytics.totalRevenue + analytics.noShowRevenue).toFixed(2)}</p>
+              <p className="text-lg font-bold text-blue-600">${((analytics.totalRevenue || 0) + (analytics.noShowRevenue || 0)).toFixed(2)}</p>
               <p className="text-xs text-gray-500">amount due</p>
             </div>
           </div>
@@ -468,26 +468,26 @@ export const Reports: React.FC = () => {
           <div className="flex items-center justify-between">
             <div>
               <h3 className="text-lg font-bold text-gray-900 mb-1">Payment Summary</h3>
-              <p className="text-sm text-gray-600">Total amount to be paid by facility/dispatcher</p>
+              <p className="text-sm text-gray-600">Total amount to be paid by contractor/dispatcher</p>
             </div>
             <div className="text-right">
               <p className="text-sm text-gray-600 mb-1">Total Amount Due</p>
-              <p className="text-4xl font-bold text-blue-600">${(analytics.totalRevenue + analytics.noShowRevenue).toFixed(2)}</p>
+              <p className="text-4xl font-bold text-blue-600">${((analytics.totalRevenue || 0) + (analytics.noShowRevenue || 0)).toFixed(2)}</p>
             </div>
           </div>
           <div className="mt-4 pt-4 border-t border-gray-200">
             <div className="grid grid-cols-3 gap-4 text-sm">
               <div>
                 <p className="text-gray-600 mb-1">Completed Revenue</p>
-                <p className="font-bold text-gray-900">${analytics.totalRevenue.toFixed(2)}</p>
+                <p className="font-bold text-gray-900">${(analytics.totalRevenue || 0).toFixed(2)}</p>
               </div>
               <div>
                 <p className="text-gray-600 mb-1">No-Show Fees</p>
-                <p className="font-bold text-gray-900">${analytics.noShowRevenue.toFixed(2)}</p>
+                <p className="font-bold text-gray-900">${(analytics.noShowRevenue || 0).toFixed(2)}</p>
               </div>
               <div>
                 <p className="text-gray-600 mb-1">Cancelled (Non-billable)</p>
-                <p className="font-bold text-red-600">-${analytics.cancelledRevenue.toFixed(2)}</p>
+                <p className="font-bold text-red-600">-${(analytics.cancelledRevenue || 0).toFixed(2)}</p>
               </div>
             </div>
           </div>
@@ -566,13 +566,13 @@ export const Reports: React.FC = () => {
                       <span className="text-gray-400">•</span>
                       <div className="flex items-center space-x-1 text-amber-600">
                         <Star className="w-3 h-3 fill-current" />
-                        <span>{driver.rating.toFixed(1)}</span>
+                        <span>{(driver.rating || 0).toFixed(1)}</span>
                       </div>
                     </div>
                   </div>
                 </div>
                 <div className="text-right">
-                  <p className="text-lg font-bold text-green-600">${driver.revenue.toFixed(2)}</p>
+                  <p className="text-lg font-bold text-green-600">${(driver.revenue || 0).toFixed(2)}</p>
                   <p className="text-xs text-gray-500">Revenue</p>
                 </div>
               </div>
@@ -592,11 +592,11 @@ export const Reports: React.FC = () => {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           <div className="p-4 bg-blue-50 rounded-lg border border-blue-200">
             <p className="text-sm font-medium text-blue-700 mb-1">Average Trip Fare</p>
-            <p className="text-2xl font-bold text-blue-900">${analytics.avgFare.toFixed(2)}</p>
+            <p className="text-2xl font-bold text-blue-900">${(analytics.avgFare || 0).toFixed(2)}</p>
           </div>
           <div className="p-4 bg-green-50 rounded-lg border border-green-200">
             <p className="text-sm font-medium text-green-700 mb-1">Average Trip Distance</p>
-            <p className="text-2xl font-bold text-green-900">{analytics.avgDistance.toFixed(1)} mi</p>
+            <p className="text-2xl font-bold text-green-900">{(analytics.avgDistance || 0).toFixed(1)} mi</p>
           </div>
           <div className="p-4 bg-amber-50 rounded-lg border border-amber-200">
             <p className="text-sm font-medium text-amber-700 mb-1">Revenue per Mile</p>

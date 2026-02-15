@@ -8,7 +8,15 @@ import vehiclesRoutes from './routes/vehicles.js';
 import patientsRoutes from './routes/patients.js';
 import tripsRoutes from './routes/trips.js';
 import clinicsRoutes from './routes/clinics.js';
-import facilitiesRoutes from './routes/facilities.js';
+import contractorsRoutes from './routes/contractors.js';
+import tripSourcesRoutes from './routes/tripSources.js';
+import usersRoutes from './routes/users.js';
+import notificationsRoutes from './routes/notifications.js';
+import trackingRoutes from './routes/tracking.js';
+import earningsRoutes from './routes/earnings.js';
+import auditRoutes from './routes/audit.js';
+import settingsRoutes from './routes/settings.js';
+import uploadsRoutes from './routes/uploads.js';
 
 dotenv.config();
 
@@ -17,7 +25,7 @@ const PORT = process.env.PORT || 3000;
 
 // Middleware
 app.use(cors({
-  origin: ['http://localhost:5173', 'http://localhost:8081'],
+  origin: ['http://localhost:5173', 'http://localhost:8081', 'http://127.0.0.1:56055', 'exp://127.0.0.1:8081', 'http://192.168.1.132:8081', 'exp://192.168.1.132:8081'],
   credentials: true
 }));
 app.use(express.json());
@@ -58,7 +66,15 @@ app.use('/api/vehicles', vehiclesRoutes);
 app.use('/api/patients', patientsRoutes);
 app.use('/api/trips', tripsRoutes);
 app.use('/api/clinics', clinicsRoutes);
-app.use('/api/facilities', facilitiesRoutes);
+app.use('/api/contractors', contractorsRoutes);
+app.use('/api/trip-sources', tripSourcesRoutes);
+app.use('/api/users', usersRoutes);
+app.use('/api/notifications', notificationsRoutes);
+app.use('/api/tracking', trackingRoutes);
+app.use('/api/earnings', earningsRoutes);
+app.use('/api/audit', auditRoutes);
+app.use('/api/settings', settingsRoutes);
+app.use('/api/uploads', uploadsRoutes);
 
 // 404 handler
 app.use((req, res) => {

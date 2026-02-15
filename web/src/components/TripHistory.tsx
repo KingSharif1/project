@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Clock, User, Edit, AlertCircle, Calendar, UserPlus } from 'lucide-react';
-import { supabase } from '../lib/supabase';
+import * as api from '../services/api';
 import { formatDateUS, formatDateTimeUS, formatTimeUS } from '../utils/dateFormatter';
 
 interface TripHistoryProps {
@@ -52,30 +52,12 @@ export const TripHistory: React.FC<TripHistoryProps> = ({
 
   const fetchCreatorName = async () => {
     try {
-      // First try to get the trip's created_by_name from the database
-      const { data: tripData, error: tripError } = await supabase
-        .from('trips')
-        .select('dispatcher_name, created_by')
-        .eq('id', tripId)
-        .maybeSingle();
-
-      if (!tripError && tripData?.dispatcher_name) {
-        setCreatorName(tripData.dispatcher_name);
-        return;
+      const result = await api.getTripCreator(tripId);
+      if (result.data?.creatorName) {
+        setCreatorName(result.data.creatorName);
       }
-
-      // Fallback to users table if we have a created_by ID
-      if (createdBy) {
-        const { data, error } = await supabase
-          .from('users')
-          .select('full_name')
-          .eq('id', createdBy)
-          .maybeSingle();
-
-        if (error) throw error;
-        if (data) {
-          setCreatorName(data.full_name);
-        }
+      if (result.data?.lastModifierName) {
+        setLastModifierName(result.data.lastModifierName);
       }
     } catch (error) {
       console.error('Error fetching creator name:', error);
@@ -83,36 +65,14 @@ export const TripHistory: React.FC<TripHistoryProps> = ({
   };
 
   const fetchLastModifier = async () => {
-    try {
-      const { data, error } = await supabase
-        .from('trip_change_history')
-        .select('changed_by_name')
-        .eq('trip_id', tripId)
-        .not('changed_by_name', 'is', null)
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-
-      if (error) throw error;
-      if (data && data.changed_by_name) {
-        setLastModifierName(data.changed_by_name);
-      }
-    } catch (error) {
-      console.error('Error fetching last modifier:', error);
-    }
+    // Already handled by fetchCreatorName via getTripCreator
   };
 
   const loadHistory = async () => {
     setLoading(true);
     try {
-      const { data, error } = await supabase
-        .from('trip_change_history')
-        .select('*')
-        .eq('trip_id', tripId)
-        .order('created_at', { ascending: true });
-
-      if (error) throw error;
-      setHistory(data || []);
+      const result = await api.getTripHistory(tripId);
+      setHistory(result.data || []);
     } catch (error) {
       console.error('Error loading trip history:', error);
     } finally {

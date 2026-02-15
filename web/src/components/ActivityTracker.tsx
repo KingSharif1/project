@@ -124,7 +124,7 @@ export const ActivityTracker: React.FC = () => {
       <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4">
         <div className="flex items-center justify-between gap-4 flex-wrap">
           <div className="flex items-center space-x-2 overflow-x-auto">
-            {['all', 'trip', 'driver', 'user', 'auth', 'patient', 'vehicle', 'facility'].map(type => (
+            {['all', 'trip', 'driver', 'user', 'auth', 'patient', 'vehicle', 'contractor'].map(type => (
               <button
                 key={type}
                 onClick={() => setFilterType(type)}

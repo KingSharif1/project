@@ -1,5 +1,5 @@
-import { supabase } from '../lib/supabase';
-import { sendSMS, SMS_TEMPLATES } from './smsService';
+import * as api from '../services/api';
+import { sendSMS } from './smsService';
 
 export interface ReminderSettings {
   enabled: boolean;
@@ -63,20 +63,22 @@ export const scheduleRemindersForTrip = async (trip: any, settings?: ReminderSet
         status: 'pending',
       };
 
-      // Store in database
-      const { error } = await supabase
-        .from('trip_reminders')
-        .insert(reminder);
-
-      if (error) {
-        console.error('Error scheduling reminder:', error);
+      // Store in database via backend API
+      try {
+        await api.logTripReminder({
+          tripId: trip.id,
+          reminderType: reminderType,
+          status: 'pending',
+        });
+      } catch (err) {
+        console.error('Error scheduling reminder:', err);
       }
     }
   }
 };
 
 // Generate reminder message
-export const generateReminderMessage = (trip: any, hoursBeforeTrip: number, driver?: any, facility?: any, trackingLink?: string): string => {
+export const generateReminderMessage = (trip: any, hoursBeforeTrip: number, driver?: any, contractor?: any, trackingLink?: string): string => {
   const scheduledDateTime = new Date(trip.scheduledTime || trip.scheduled_pickup_time);
 
   const date = scheduledDateTime.toLocaleDateString('en-US', {
@@ -92,7 +94,7 @@ export const generateReminderMessage = (trip: any, hoursBeforeTrip: number, driv
     hour12: true,
   });
 
-  const clinicName = facility?.name || trip.clinic_name || trip.clinicName || 'your healthcare provider';
+  const clinicName = contractor?.name || trip.clinic_name || trip.clinicName || 'your healthcare provider';
 
   let message = '';
 
@@ -125,9 +127,9 @@ export const generateReminderMessage = (trip: any, hoursBeforeTrip: number, driv
 };
 
 // Send a scheduled reminder
-export const sendScheduledReminder = async (reminder: ScheduledReminder, trip: any, patient: any, driver?: any, facility?: any, trackingLink?: string) => {
+export const sendScheduledReminder = async (reminder: ScheduledReminder, trip: any, patient: any, driver?: any, contractor?: any, trackingLink?: string) => {
   try {
-    const message = generateReminderMessage(trip, reminder.hoursBeforeTrip, driver, facility, trackingLink);
+    const message = generateReminderMessage(trip, reminder.hoursBeforeTrip, driver, contractor, trackingLink);
 
     let success = false;
     let error = null;
@@ -148,22 +150,19 @@ export const sendScheduledReminder = async (reminder: ScheduledReminder, trip: a
 
     // Send Email (placeholder - implement with your email service)
     if (reminder.reminderType === 'email' || reminder.reminderType === 'both') {
-      if (patient.email) {
-        // TODO: Implement email sending
-        console.log('Email reminder would be sent to:', patient.email);
-      }
+      // TODO: Implement email sending — patient email not currently stored
+      console.log('Email reminder skipped — no email on patient record');
     }
 
-    // Update reminder status
-    await supabase
-      .from('trip_reminders')
-      .update({
+    // Update reminder status via backend API
+    if (reminder.id) {
+      await api.updateReminder(reminder.id, {
         status: success ? 'sent' : 'failed',
-        sentAt: new Date().toISOString(),
+        sent_at: new Date().toISOString(),
         message,
         error,
-      })
-      .eq('id', reminder.id);
+      });
+    }
 
     return { success, error };
   } catch (err) {
@@ -176,24 +175,13 @@ export const sendScheduledReminder = async (reminder: ScheduledReminder, trip: a
 export const processPendingReminders = async () => {
   const now = new Date().toISOString();
 
-  // Get pending reminders that are due
-  const { data: pendingReminders, error } = await supabase
-    .from('trip_reminders')
-    .select(`
-      *,
-      trips:trip_id (
-        *,
-        patients:patient_id (*),
-        drivers:driver_id (*),
-        facilities:facility_id (*)
-      )
-    `)
-    .eq('status', 'pending')
-    .lte('scheduledFor', now)
-    .limit(50);
-
-  if (error) {
-    console.error('Error fetching pending reminders:', error);
+  // Get pending reminders that are due via backend API
+  let pendingReminders: any[] = [];
+  try {
+    const result = await api.getPendingReminders();
+    pendingReminders = result.data || [];
+  } catch (err) {
+    console.error('Error fetching pending reminders:', err);
     return;
   }
 
@@ -208,7 +196,7 @@ export const processPendingReminders = async () => {
     const trip = reminder.trips;
     const patient = trip?.patients;
     const driver = trip?.drivers;
-    const facility = trip?.facilities;
+    const contractor = trip?.contractors;
 
     if (trip && patient) {
       // Check if this is an outbound trip (ends with "A")
@@ -222,17 +210,14 @@ export const processPendingReminders = async () => {
           ? `${window.location.origin}/track/${trip.trackingToken}`
           : undefined;
 
-        await sendScheduledReminder(reminder, trip, patient, driver, facility, trackingLink);
+        await sendScheduledReminder(reminder, trip, patient, driver, contractor, trackingLink);
         console.log('Reminder sent for outbound trip:', tripNumber);
       } else {
         // Mark reminder as cancelled for return trips (B trips)
-        await supabase
-          .from('trip_reminders')
-          .update({
-            status: 'cancelled',
-            error: 'Skipped - Return trip (B trip)'
-          })
-          .eq('id', reminder.id);
+        await api.updateReminder(reminder.id, {
+          status: 'cancelled',
+          error: 'Skipped - Return trip (B trip)',
+        });
         console.log('Reminder skipped for return trip:', tripNumber);
       }
     }
@@ -241,50 +226,36 @@ export const processPendingReminders = async () => {
 
 // Cancel reminders for a trip
 export const cancelRemindersForTrip = async (tripId: string) => {
-  const { error } = await supabase
-    .from('trip_reminders')
-    .update({ status: 'cancelled' })
-    .eq('tripId', tripId)
-    .eq('status', 'pending');
-
-  if (error) {
+  try {
+    await api.cancelRemindersForTrip(tripId);
+  } catch (error) {
     console.error('Error cancelling reminders:', error);
   }
 };
 
 // Get reminders for a trip
 export const getRemindersForTrip = async (tripId: string) => {
-  const { data, error } = await supabase
-    .from('trip_reminders')
-    .select('*')
-    .eq('tripId', tripId)
-    .order('scheduledFor', { ascending: true });
-
-  if (error) {
+  try {
+    const result = await api.getRemindersForTrip(tripId);
+    return result.data || [];
+  } catch (error) {
     console.error('Error fetching reminders:', error);
     return [];
   }
-
-  return data || [];
 };
 
 // Get reminder statistics
 export const getReminderStats = async (startDate?: string, endDate?: string) => {
-  let query = supabase
-    .from('trip_reminders')
-    .select('status, scheduledFor');
-
-  if (startDate) {
-    query = query.gte('scheduledFor', startDate);
-  }
-
-  if (endDate) {
-    query = query.lte('scheduledFor', endDate);
-  }
-
-  const { data, error } = await query;
-
-  if (error) {
+  try {
+    const result = await api.getReminderStats(startDate, endDate);
+    return result.data || {
+      total: 0,
+      pending: 0,
+      sent: 0,
+      failed: 0,
+      cancelled: 0,
+    };
+  } catch (error) {
     console.error('Error fetching reminder stats:', error);
     return {
       total: 0,
@@ -294,12 +265,4 @@ export const getReminderStats = async (startDate?: string, endDate?: string) => 
       cancelled: 0,
     };
   }
-
-  return {
-    total: data?.length || 0,
-    pending: data?.filter(r => r.status === 'pending').length || 0,
-    sent: data?.filter(r => r.status === 'sent').length || 0,
-    failed: data?.filter(r => r.status === 'failed').length || 0,
-    cancelled: data?.filter(r => r.status === 'cancelled').length || 0,
-  };
 };

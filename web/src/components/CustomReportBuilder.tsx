@@ -35,7 +35,7 @@ const REPORT_SECTIONS: ReportSection[] = [
   { id: 'billing', name: 'Billing Summary', icon: DollarSign, description: 'Revenue, completed, cancelled, and no-show trips' },
   { id: 'trips', name: 'Trip Details', icon: Car, description: 'Complete list of trips with status and details' },
   { id: 'drivers', name: 'Driver Performance', icon: Users, description: 'Driver statistics and performance metrics' },
-  { id: 'facilities', name: 'Facility Summary', icon: Building2, description: 'Facility-wise trip breakdown' },
+  { id: 'contractors', name: 'Contractor Summary', icon: Building2, description: 'Contractor-wise trip breakdown' },
   { id: 'analytics', name: 'Analytics & Metrics', icon: TrendingUp, description: 'Charts and performance indicators' },
   { id: 'patients', name: 'Patient List', icon: Users, description: 'Patient information and trip history' },
 ];
@@ -80,7 +80,7 @@ export const CustomReportBuilder: React.FC<CustomReportBuilderProps> = ({ onClos
   });
   const [reportTitle, setReportTitle] = useState('Custom Transportation Report');
   const [includeDetails, setIncludeDetails] = useState(true);
-  const [selectedFacilities, setSelectedFacilities] = useState<string[]>([]);
+  const [selectedContractors, setSelectedContractors] = useState<string[]>([]);
 
   // Column selection for trip details
   const [selectedColumns, setSelectedColumns] = useState<string[]>([
@@ -112,11 +112,11 @@ export const CustomReportBuilder: React.FC<CustomReportBuilderProps> = ({ onClos
       endDate.setHours(23, 59, 59, 999);
 
       const inDateRange = tripDate >= startDate && tripDate <= endDate;
-      const inFacility = selectedFacilities.length === 0 || selectedFacilities.includes(trip.clinicId);
+      const inContractor = selectedContractors.length === 0 || selectedContractors.includes(trip.clinicId);
 
-      return inDateRange && inFacility;
+      return inDateRange && inContractor;
     });
-  }, [trips, dateRange, selectedFacilities]);
+  }, [trips, dateRange, selectedContractors]);
 
   const analytics = useMemo(() => {
     const completedTrips = filteredTrips.filter(t => t.status === 'completed');
@@ -291,8 +291,8 @@ export const CustomReportBuilder: React.FC<CustomReportBuilderProps> = ({ onClos
       });
     }
 
-    // Facility Summary
-    if (selectedSections.includes('facilities')) {
+    // Contractor Summary
+    if (selectedSections.includes('contractors')) {
       if ((doc as any).lastAutoTable) {
         yPos = (doc as any).lastAutoTable.finalY + 15;
         if (yPos > 240) {
@@ -306,10 +306,10 @@ export const CustomReportBuilder: React.FC<CustomReportBuilderProps> = ({ onClos
 
       doc.setFontSize(14);
       doc.setFont('helvetica', 'bold');
-      doc.text('Facility Summary', 14, yPos);
+      doc.text('Contractor Summary', 14, yPos);
       yPos += 8;
 
-      const facilityStats = clinics.map(clinic => {
+      const contractorStats = clinics.map(clinic => {
         const clinicTrips = filteredTrips.filter(t => t.clinicId === clinic.id);
         const completed = clinicTrips.filter(t => t.status === 'completed').length;
         const revenue = clinicTrips.filter(t => t.status === 'completed').reduce((sum, t) => sum + t.fare, 0);
@@ -323,8 +323,8 @@ export const CustomReportBuilder: React.FC<CustomReportBuilderProps> = ({ onClos
 
       autoTable(doc, {
         startY: yPos,
-        head: [['Facility', 'Total Trips', 'Completed', 'Revenue']],
-        body: facilityStats,
+        head: [['Contractor', 'Total Trips', 'Completed', 'Revenue']],
+        body: contractorStats,
         theme: 'grid',
         headStyles: { fillColor: [37, 99, 235] },
         margin: { left: 14, right: 14 },
@@ -440,10 +440,10 @@ export const CustomReportBuilder: React.FC<CustomReportBuilderProps> = ({ onClos
       csvContent += '\n';
     }
 
-    // Facility Summary
-    if (selectedSections.includes('facilities')) {
-      csvContent += '"FACILITY SUMMARY"\n';
-      csvContent += '"Facility","Total Trips","Completed","Revenue"\n';
+    // Contractor Summary
+    if (selectedSections.includes('contractors')) {
+      csvContent += '"CONTRACTOR SUMMARY"\n';
+      csvContent += '"Contractor","Total Trips","Completed","Revenue"\n';
       clinics.forEach(clinic => {
         const clinicTrips = filteredTrips.filter(t => t.clinicId === clinic.id);
         const completed = clinicTrips.filter(t => t.status === 'completed').length;
@@ -524,26 +524,26 @@ export const CustomReportBuilder: React.FC<CustomReportBuilderProps> = ({ onClos
               {isAdmin && clinics.length > 0 && (
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-2">
-                    Filter by Facilities
+                    Filter by Contractors
                   </label>
                   <div className="space-y-2">
                     {clinics.filter(c => c.isActive).map(clinic => (
                       <button
                         key={clinic.id}
                         onClick={() => {
-                          setSelectedFacilities(prev =>
+                          setSelectedContractors(prev =>
                             prev.includes(clinic.id)
                               ? prev.filter(id => id !== clinic.id)
                               : [...prev, clinic.id]
                           );
                         }}
                         className={`w-full flex items-center space-x-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-                          selectedFacilities.includes(clinic.id)
+                          selectedContractors.includes(clinic.id)
                             ? 'bg-blue-600 text-white'
                             : 'bg-white text-gray-700 hover:bg-gray-100 border border-gray-200'
                         }`}
                       >
-                        {selectedFacilities.includes(clinic.id) ? (
+                        {selectedContractors.includes(clinic.id) ? (
                           <CheckSquare className="w-4 h-4" />
                         ) : (
                           <Square className="w-4 h-4" />
@@ -646,9 +646,9 @@ export const CustomReportBuilder: React.FC<CustomReportBuilderProps> = ({ onClos
                 <p className="text-sm text-gray-500 mt-1">
                   Generated on {new Date().toLocaleString()}
                 </p>
-                {selectedFacilities.length > 0 && (
+                {selectedContractors.length > 0 && (
                   <p className="text-sm text-blue-600 mt-2">
-                    Filtered by: {selectedFacilities.map(id => clinics.find(c => c.id === id)?.name).join(', ')}
+                    Filtered by: {selectedContractors.map(id => clinics.find(c => c.id === id)?.name).join(', ')}
                   </p>
                 )}
               </div>
@@ -806,18 +806,18 @@ export const CustomReportBuilder: React.FC<CustomReportBuilderProps> = ({ onClos
                 </section>
               )}
 
-              {selectedSections.includes('facilities') && isAdmin && (
+              {selectedSections.includes('contractors') && isAdmin && (
                 <section className="break-inside-avoid">
                   <div className="flex items-center space-x-2 mb-4 pb-2 border-b-2 border-blue-600">
                     <Building2 className="w-6 h-6 text-blue-600" />
-                    <h2 className="text-2xl font-bold text-gray-900">Facility Summary</h2>
+                    <h2 className="text-2xl font-bold text-gray-900">Contractor Summary</h2>
                   </div>
 
                   <div className="overflow-x-auto border border-gray-300 rounded-lg">
                     <table className="w-full text-sm border-collapse">
                       <thead>
                         <tr className="bg-gray-100 border-b-2 border-gray-300">
-                          <th className="text-left py-3 px-3 font-semibold text-gray-700 border-r border-gray-300">Facility Name</th>
+                          <th className="text-left py-3 px-3 font-semibold text-gray-700 border-r border-gray-300">Contractor Name</th>
                           <th className="text-center py-3 px-3 font-semibold text-gray-700 border-r border-gray-300">Total Trips</th>
                           <th className="text-center py-3 px-3 font-semibold text-gray-700 border-r border-gray-300">Completed</th>
                           <th className="text-center py-3 px-3 font-semibold text-gray-700 border-r border-gray-300">Cancelled</th>

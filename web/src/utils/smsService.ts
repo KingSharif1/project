@@ -1,4 +1,4 @@
-import { supabase } from '../lib/supabase';
+import * as api from '../services/api';
 
 export interface SMSNotification {
   to: string;
@@ -11,25 +11,11 @@ export interface SMSNotification {
 
 export const sendSMS = async (notification: SMSNotification): Promise<{ success: boolean; error?: string }> => {
   try {
-    const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-    const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
-
-    const response = await fetch(`${supabaseUrl}/functions/v1/sms-notifications`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${supabaseKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(notification),
-    });
-
-    const data = await response.json();
-
-    if (!response.ok) {
-      return { success: false, error: data.error || 'Failed to send SMS' };
+    const result = await api.sendSms(notification.to, notification.message, notification.tripId);
+    if (result.success) {
+      return { success: true };
     }
-
-    return { success: true };
+    return { success: false, error: (result as any).error || 'Failed to send SMS' };
   } catch (error) {
     console.error('Error sending SMS:', error);
     return {
@@ -103,37 +89,28 @@ export const notifyDriver = async (
 
 // Get SMS history for a trip
 export const getSMSHistory = async (tripId: string) => {
-  const { data, error } = await supabase
-    .from('sms_notifications')
-    .select('*')
-    .eq('trip_id', tripId)
-    .order('created_at', { ascending: false });
-
-  if (error) {
+  try {
+    const result = await api.getTripSmsHistory(tripId);
+    return result.data || [];
+  } catch (error) {
     console.error('Error fetching SMS history:', error);
     return [];
   }
-
-  return data || [];
 };
 
 // Get SMS statistics
 export const getSMSStats = async (startDate?: string, endDate?: string) => {
-  let query = supabase
-    .from('sms_notifications')
-    .select('status, created_at');
+  try {
+    const result = await api.getSmsHistory(startDate, endDate);
+    const data = result.data || [];
 
-  if (startDate) {
-    query = query.gte('created_at', startDate);
-  }
-
-  if (endDate) {
-    query = query.lte('created_at', endDate);
-  }
-
-  const { data, error } = await query;
-
-  if (error) {
+    return {
+      total: data.length,
+      sent: data.filter((s: any) => s.status === 'sent' || s.status === 'delivered').length,
+      delivered: data.filter((s: any) => s.status === 'delivered').length,
+      failed: data.filter((s: any) => s.status === 'failed').length,
+    };
+  } catch (error) {
     console.error('Error fetching SMS stats:', error);
     return {
       total: 0,
@@ -142,13 +119,4 @@ export const getSMSStats = async (startDate?: string, endDate?: string) => {
       failed: 0,
     };
   }
-
-  const stats = {
-    total: data?.length || 0,
-    sent: data?.filter(s => s.status === 'sent' || s.status === 'delivered').length || 0,
-    delivered: data?.filter(s => s.status === 'delivered').length || 0,
-    failed: data?.filter(s => s.status === 'failed').length || 0,
-  };
-
-  return stats;
 };

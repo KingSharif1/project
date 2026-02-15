@@ -60,6 +60,70 @@ router.get('/', async (req, res) => {
 });
 
 /**
+ * GET /api/clinics/stats
+ * Get stats for all clinics (superadmin dashboard)
+ */
+router.get('/stats', requireRole('superadmin'), async (req, res) => {
+  try {
+    const { data: clinicsData, error } = await supabase
+      .from('clinics')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.error('Error fetching clinics for stats:', error);
+      return res.status(500).json({ error: 'Failed to fetch clinic stats' });
+    }
+
+    const stats = {};
+    for (const clinic of (clinicsData || [])) {
+      const [tripsResult, driversResult, usersResult] = await Promise.all([
+        supabase.from('trips').select('id', { count: 'exact' }).eq('clinic_id', clinic.id),
+        supabase.from('drivers').select('id', { count: 'exact' }).eq('clinic_id', clinic.id),
+        supabase.from('users').select('id', { count: 'exact' }).eq('clinic_id', clinic.id),
+      ]);
+
+      stats[clinic.id] = {
+        tripCount: tripsResult.count || 0,
+        driverCount: driversResult.count || 0,
+        userCount: usersResult.count || 0,
+      };
+    }
+
+    res.json({ success: true, data: { clinics: clinicsData, stats } });
+  } catch (error) {
+    console.error('Error in GET /clinics/stats:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+/**
+ * GET /api/clinics/:id/members
+ * Get users and drivers for a specific clinic (superadmin)
+ */
+router.get('/:id/members', requireRole('superadmin'), async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const [usersResult, driversResult] = await Promise.all([
+      supabase.from('users').select('*').eq('clinic_id', id),
+      supabase.from('drivers').select('*').eq('clinic_id', id),
+    ]);
+
+    res.json({
+      success: true,
+      data: {
+        users: usersResult.data || [],
+        drivers: driversResult.data || [],
+      },
+    });
+  } catch (error) {
+    console.error('Error in GET /clinics/:id/members:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+/**
  * GET /api/clinics/:id
  * Get a single clinic by ID
  */

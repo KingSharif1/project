@@ -13,6 +13,7 @@ export const StatusBadge: React.FC<StatusBadgeProps> = ({ status, size = 'md' })
         return 'bg-green-100 text-green-800 border-green-200';
       case 'on_trip':
       case 'in_progress':
+      case 'in-progress':
         return 'bg-blue-100 text-blue-800 border-blue-200';
       case 'offline':
         return 'bg-gray-100 text-gray-800 border-gray-200';

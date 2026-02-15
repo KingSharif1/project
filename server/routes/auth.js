@@ -33,6 +33,8 @@ const createLoginResponse = (userData) => {
       userId: userData.id,
       email: userData.email,
       role: userData.role,
+      clinicId: userData.clinic_id || null,
+      fullName: `${userData.first_name || ''} ${userData.last_name || ''}`.trim(),
     },
     process.env.JWT_SECRET,
     { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
@@ -560,9 +562,9 @@ router.post('/change-password', async (req, res) => {
       return res.status(401).json({ error: 'Current password is incorrect' });
     }
 
-    // Update password using RPC
-    const { error: updateError } = await supabase.rpc('update_user_password', {
-      user_email: userData.email,
+    // Update password using RPC (admin_update_user_password is the only password update function in DB)
+    const { error: updateError } = await supabase.rpc('admin_update_user_password', {
+      target_email: userData.email,
       new_password: newPassword
     });
 

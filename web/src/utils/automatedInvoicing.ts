@@ -1,4 +1,4 @@
-import { supabase } from '../lib/supabase';
+import * as api from '../services/api';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
@@ -141,18 +141,11 @@ export const generateInvoicePDF = (invoice: InvoiceData): jsPDF => {
 // Generate invoice for a single trip
 export const generateTripInvoice = async (tripId: string): Promise<jsPDF | null> => {
   try {
-    const { data: trip, error } = await supabase
-      .from('trips')
-      .select(`
-        *,
-        patients (name, phone, email),
-        facilities (name, billing_address)
-      `)
-      .eq('id', tripId)
-      .single();
+    const result = await api.getTrip(tripId);
+    const trip = result.data;
 
-    if (error || !trip) {
-      console.error('Error fetching trip:', error);
+    if (!trip) {
+      console.error('Error fetching trip');
       return null;
     }
 
@@ -161,8 +154,8 @@ export const generateTripInvoice = async (tripId: string): Promise<jsPDF | null>
       invoiceDate: trip.invoice_date || new Date().toLocaleDateString(),
       dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toLocaleDateString(),
       billTo: {
-        name: trip.facilities?.name || trip.patients?.name || trip.passenger_name || 'Customer',
-        address: trip.facilities?.billing_address || trip.billing_address,
+        name: trip.contractors?.name || trip.patients?.name || trip.passenger_name || 'Customer',
+        address: trip.contractors?.billing_address || trip.billing_address,
         phone: trip.patients?.phone || trip.passenger_phone,
         email: trip.patients?.email || trip.passenger_email || trip.invoice_email,
       },
@@ -190,17 +183,11 @@ export const generateTripInvoice = async (tripId: string): Promise<jsPDF | null>
 // Generate batch invoice for multiple trips
 export const generateBatchInvoice = async (tripIds: string[]): Promise<jsPDF | null> => {
   try {
-    const { data: trips, error } = await supabase
-      .from('trips')
-      .select(`
-        *,
-        patients (name, phone, email),
-        facilities (name, billing_address)
-      `)
-      .in('id', tripIds);
+    const result = await api.getTripsBatch(tripIds);
+    const trips = result.data;
 
-    if (error || !trips || trips.length === 0) {
-      console.error('Error fetching trips:', error);
+    if (!trips || trips.length === 0) {
+      console.error('Error fetching trips');
       return null;
     }
 
@@ -224,8 +211,8 @@ export const generateBatchInvoice = async (tripIds: string[]): Promise<jsPDF | n
       invoiceDate: new Date().toLocaleDateString(),
       dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toLocaleDateString(),
       billTo: {
-        name: firstTrip.facilities?.name || firstTrip.patients?.name || 'Customer',
-        address: firstTrip.facilities?.billing_address,
+        name: firstTrip.contractors?.name || firstTrip.patients?.name || 'Customer',
+        address: firstTrip.contractors?.billing_address,
         phone: firstTrip.patients?.phone,
         email: firstTrip.patients?.email || firstTrip.invoice_email,
       },
@@ -245,11 +232,8 @@ export const generateBatchInvoice = async (tripIds: string[]): Promise<jsPDF | n
 export const autoSendInvoice = async (tripId: string): Promise<boolean> => {
   try {
     // Check if auto-invoice is enabled for this trip
-    const { data: trip } = await supabase
-      .from('trips')
-      .select('auto_invoice, invoice_email, status')
-      .eq('id', tripId)
-      .single();
+    const tripResult = await api.getTrip(tripId);
+    const trip = tripResult.data;
 
     if (!trip || !trip.auto_invoice || trip.status !== 'completed') {
       return false;
@@ -267,10 +251,7 @@ export const autoSendInvoice = async (tripId: string): Promise<boolean> => {
     // 3. Update trip record with invoice_sent_at timestamp
 
     // For now, just update the timestamp
-    await supabase
-      .from('trips')
-      .update({ invoice_sent_at: new Date().toISOString() })
-      .eq('id', tripId);
+    await api.updateTrip(tripId, { invoice_sent_at: new Date().toISOString() });
 
     console.log(`Invoice auto-sent for trip ${tripId}`);
     return true;
@@ -282,35 +263,21 @@ export const autoSendInvoice = async (tripId: string): Promise<boolean> => {
 
 // Schedule recurring invoice generation
 export const scheduleRecurringInvoices = async (
-  facilityId: string,
+  contractorId: string,
   frequency: 'weekly' | 'monthly'
 ): Promise<void> => {
   // This would integrate with a job scheduler
   // For now, it's a placeholder for future implementation
-  console.log(`Scheduling ${frequency} invoices for facility ${facilityId}`);
+  console.log(`Scheduling ${frequency} invoices for contractor ${contractorId}`);
 };
 
 // Get invoice history
 export const getInvoiceHistory = async (startDate?: string, endDate?: string) => {
-  let query = supabase
-    .from('trips')
-    .select('id, trip_number, invoice_number, invoice_date, invoice_sent_at, total_charge, payment_status, passenger_name, facilities(name)')
-    .not('invoice_sent_at', 'is', null);
-
-  if (startDate) {
-    query = query.gte('invoice_date', startDate);
-  }
-
-  if (endDate) {
-    query = query.lte('invoice_date', endDate);
-  }
-
-  const { data, error } = await query.order('invoice_sent_at', { ascending: false });
-
-  if (error) {
+  try {
+    const result = await api.getInvoiceHistory(startDate, endDate);
+    return result.data || [];
+  } catch (error) {
     console.error('Error fetching invoice history:', error);
     return [];
   }
-
-  return data || [];
 };

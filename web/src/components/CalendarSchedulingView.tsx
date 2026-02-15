@@ -474,7 +474,7 @@ export const CalendarSchedulingView: React.FC<CalendarSchedulingViewProps> = ({ 
             onChange={e => setSelectedFilters({ ...selectedFilters, clinic: e.target.value })}
             className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
           >
-            <option value="all">All Facilities</option>
+            <option value="all">All Contractors</option>
             {clinics.map(clinic => (
               <option key={clinic.id} value={clinic.id}>{clinic.name}</option>
             ))}

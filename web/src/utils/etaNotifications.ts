@@ -1,4 +1,5 @@
 import { supabase } from '../lib/supabase';
+import * as api from '../services/api';
 import { sendSMS, SMS_TEMPLATES } from './smsService';
 import { Trip } from '../types';
 
@@ -56,12 +57,12 @@ export const sendETANotification = async (
     });
 
     if (result.success) {
-      await supabase.from('sms_notifications').insert({
-        trip_id: trip.id,
-        phone_number: patientPhone,
+      await api.logSmsNotification({
+        tripId: trip.id,
+        phoneNumber: patientPhone,
         message,
-        message_type: 'driver_enroute',
-        patient_name: trip.customerName,
+        messageType: 'driver_enroute',
+        patientName: trip.customerName,
         status: 'sent',
       });
     }
@@ -98,12 +99,12 @@ export const sendArrivedNotification = async (
     });
 
     if (result.success) {
-      await supabase.from('sms_notifications').insert({
-        trip_id: trip.id,
-        phone_number: patientPhone,
+      await api.logSmsNotification({
+        tripId: trip.id,
+        phoneNumber: patientPhone,
         message,
-        message_type: 'driver_arrived',
-        patient_name: trip.customerName,
+        messageType: 'driver_arrived',
+        patientName: trip.customerName,
         status: 'sent',
       });
     }
@@ -160,13 +161,8 @@ const toRad = (degrees: number): number => {
 };
 
 export const startETAMonitoring = async (tripId: string) => {
-  const trip = await supabase
-    .from('trips')
-    .select('*')
-    .eq('id', tripId)
-    .single();
-
-  if (!trip.data) return;
+  const tripResult = await api.getTrip(tripId);
+  if (!tripResult.data) return;
 
   const channel = supabase
     .channel(`trip-location-${tripId}`)
@@ -184,11 +180,8 @@ export const startETAMonitoring = async (tripId: string) => {
         const distance = await getDistanceToPickup(tripId, location.latitude, location.longitude);
 
         if (distance && distance <= 1.0 && distance > 0.5) {
-          const { data: tripData } = await supabase
-            .from('trips')
-            .select('*, drivers(*), vehicles(*)')
-            .eq('id', tripId)
-            .single();
+          const etaTripResult = await api.getTrip(tripId);
+          const tripData = etaTripResult.data;
 
           if (tripData && tripData.customer_phone) {
             await sendETANotification(
@@ -201,22 +194,19 @@ export const startETAMonitoring = async (tripId: string) => {
         }
 
         if (distance && distance <= 0.1) {
-          const { data: tripData } = await supabase
-            .from('trips')
-            .select('*, drivers(*), vehicles(*)')
-            .eq('id', tripId)
-            .single();
+          const arrivedTripResult = await api.getTrip(tripId);
+          const arrivedTripData = arrivedTripResult.data;
 
-          if (tripData && tripData.customer_phone) {
-            const vehicleInfo = tripData.vehicles
-              ? `${tripData.vehicles.make} ${tripData.vehicles.model} - ${tripData.vehicles.license_plate}`
+          if (arrivedTripData && arrivedTripData.customer_phone) {
+            const vehicleInfo = arrivedTripData.vehicles
+              ? `${arrivedTripData.vehicles.make} ${arrivedTripData.vehicles.model} - ${arrivedTripData.vehicles.license_plate}`
               : 'your vehicle';
 
             await sendArrivedNotification(
-              tripData as any,
-              tripData.drivers?.full_name || 'Your driver',
+              arrivedTripData as any,
+              arrivedTripData.drivers?.full_name || 'Your driver',
               vehicleInfo,
-              tripData.customer_phone
+              arrivedTripData.customer_phone
             );
           }
         }
@@ -233,11 +223,8 @@ const getDistanceToPickup = async (
   driverLng: number
 ): Promise<number | null> => {
   try {
-    const { data: trip } = await supabase
-      .from('trips')
-      .select('pickup_address, pickup_city, pickup_state, pickup_zip')
-      .eq('id', tripId)
-      .single();
+    const tripResult = await api.getTrip(tripId);
+    const trip = tripResult.data;
 
     if (!trip) return null;
 

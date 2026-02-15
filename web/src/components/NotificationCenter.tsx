@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Bell, Check, Trash2, X, Volume2, VolumeX, Settings as SettingsIcon } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import * as api from '../services/api';
 import { useAuth } from '../context/AuthContext';
 
 interface Notification {
@@ -73,16 +74,10 @@ export const NotificationCenter: React.FC = () => {
 
   const loadNotifications = async () => {
     try {
-      const { data, error } = await supabase
-        .from('notifications')
-        .select('*')
-        .eq('user_id', user?.id)
-        .order('created_at', { ascending: false })
-        .limit(50);
+      const result = await api.getUserNotifications();
+      const data = result.data || [];
 
-      if (error) throw error;
-
-      const formattedNotifications = (data || []).map(n => ({
+      const formattedNotifications = data.map((n: any) => ({
         id: n.id,
         userId: n.user_id,
         type: n.type,
@@ -100,7 +95,7 @@ export const NotificationCenter: React.FC = () => {
       }));
 
       setNotifications(formattedNotifications);
-      setUnreadCount(formattedNotifications.filter(n => !n.isRead).length);
+      setUnreadCount(formattedNotifications.filter((n: any) => !n.isRead).length);
     } catch (error) {
       console.error('Error loading notifications:', error);
     }
@@ -108,13 +103,8 @@ export const NotificationCenter: React.FC = () => {
 
   const loadPreferences = async () => {
     try {
-      const { data, error } = await supabase
-        .from('notification_preferences')
-        .select('*')
-        .eq('user_id', user?.id)
-        .maybeSingle();
-
-      if (error && error.code !== 'PGRST116') throw error;
+      const result = await api.getNotificationPreferences();
+      const data = result.data;
 
       if (data) {
         setPreferences({
@@ -214,12 +204,7 @@ export const NotificationCenter: React.FC = () => {
 
   const markAsRead = async (notificationId: string) => {
     try {
-      const { error } = await supabase
-        .from('notifications')
-        .update({ is_read: true })
-        .eq('id', notificationId);
-
-      if (error) throw error;
+      await api.markNotificationRead(notificationId);
 
       setNotifications(prev =>
         prev.map(n => n.id === notificationId ? { ...n, isRead: true } : n)
@@ -233,13 +218,7 @@ export const NotificationCenter: React.FC = () => {
   const markAllAsRead = async () => {
     try {
       const unreadIds = notifications.filter(n => !n.isRead).map(n => n.id);
-
-      const { error } = await supabase
-        .from('notifications')
-        .update({ is_read: true })
-        .in('id', unreadIds);
-
-      if (error) throw error;
+      await api.markAllNotificationsRead(unreadIds);
 
       setNotifications(prev => prev.map(n => ({ ...n, isRead: true })));
       setUnreadCount(0);
@@ -250,12 +229,7 @@ export const NotificationCenter: React.FC = () => {
 
   const deleteNotification = async (notificationId: string) => {
     try {
-      const { error } = await supabase
-        .from('notifications')
-        .delete()
-        .eq('id', notificationId);
-
-      if (error) throw error;
+      await api.deleteNotification(notificationId);
 
       setNotifications(prev => prev.filter(n => n.id !== notificationId));
       setUnreadCount(prev => {
@@ -271,12 +245,7 @@ export const NotificationCenter: React.FC = () => {
     if (!confirm('Are you sure you want to clear all notifications?')) return;
 
     try {
-      const { error } = await supabase
-        .from('notifications')
-        .delete()
-        .eq('user_id', user?.id);
-
-      if (error) throw error;
+      await api.clearAllNotifications();
 
       setNotifications([]);
       setUnreadCount(0);
@@ -287,22 +256,16 @@ export const NotificationCenter: React.FC = () => {
 
   const savePreferences = async () => {
     try {
-      const { error } = await supabase
-        .from('notification_preferences')
-        .upsert({
-          user_id: user?.id,
-          trip_assigned: preferences.tripAssigned,
-          trip_status_changed: preferences.tripStatusChanged,
-          trip_cancelled: preferences.tripCancelled,
-          trip_completed: preferences.tripCompleted,
-          new_message: preferences.newMessage,
-          payment_received: preferences.paymentReceived,
-          system_alerts: preferences.systemAlerts,
-          sound_enabled: preferences.soundEnabled,
-          updated_at: new Date().toISOString()
-        });
-
-      if (error) throw error;
+      await api.saveNotificationPreferences({
+        trip_assigned: preferences.tripAssigned,
+        trip_status_changed: preferences.tripStatusChanged,
+        trip_cancelled: preferences.tripCancelled,
+        trip_completed: preferences.tripCompleted,
+        new_message: preferences.newMessage,
+        payment_received: preferences.paymentReceived,
+        system_alerts: preferences.systemAlerts,
+        sound_enabled: preferences.soundEnabled,
+      });
 
       alert('Preferences saved successfully!');
       setShowSettings(false);

@@ -12,14 +12,14 @@ interface AuthContextType {
   isSuperAdmin: boolean; // Platform owner - can manage all companies
   isAdmin: boolean; // Company admin - manages their own company
   isDispatcher: boolean;
-  isRegularDispatcher: boolean; // Company-level dispatcher (no facility assigned)
-  isFacilityDispatcher: boolean; // Facility-level dispatcher (has facilityId)
+  isRegularDispatcher: boolean; // Company-level dispatcher (no contractor assigned)
+  isContractorDispatcher: boolean; // Contractor-level dispatcher (has clinicId/contractorId)
   showSessionWarning: boolean;
   extendSession: () => void;
   // Permission helpers
   canManageCompanies: boolean; // Super admin only - create/edit companies
   canManageUsers: boolean;
-  canManageFacilities: boolean;
+  canManageContractors: boolean;
   canAssignDrivers: boolean;
   canViewAllTrips: boolean;
   canViewFinancialReports: boolean;
@@ -187,17 +187,17 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const isSuperAdmin = user?.role === 'superadmin'; // Platform owner - manages all companies
   const isAdmin = user?.role === 'admin' || isSuperAdmin; // Company admin OR super admin
   const isDispatcher = user?.role === 'dispatcher';
-  const isFacilityDispatcher = isDispatcher && !!user?.facilityId;
-  const isRegularDispatcher = isDispatcher && !user?.facilityId;
+  const isContractorDispatcher = isDispatcher && !!user?.contractorId;
+  const isRegularDispatcher = isDispatcher && !user?.contractorId;
 
   // Permission helpers based on role
   const canManageCompanies = isSuperAdmin; // Only super admin can create/edit companies
   const canManageUsers = isAdmin; // Admin and super admin can manage users
-  const canManageFacilities = isAdmin; // Only admin can create/edit facilities
-  const canAssignDrivers = isAdmin || isRegularDispatcher; // Facility dispatchers cannot assign drivers
-  const canViewAllTrips = isAdmin || isRegularDispatcher; // Facility dispatchers only see their facility's trips
+  const canManageContractors = isAdmin; // Only admin can create/edit contractors
+  const canAssignDrivers = isAdmin || isRegularDispatcher; // Contractor dispatchers cannot assign drivers
+  const canViewAllTrips = isAdmin || isRegularDispatcher; // Contractor dispatchers only see their contractor's trips
   const canViewFinancialReports = isAdmin; // Only admin can view financial reports
-  const canManageDrivers = isAdmin || isRegularDispatcher; // Facility dispatchers cannot manage drivers
+  const canManageDrivers = isAdmin || isRegularDispatcher; // Contractor dispatchers cannot manage drivers
 
   const value: AuthContextType = {
     user,
@@ -207,12 +207,12 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     isAdmin,
     isDispatcher,
     isRegularDispatcher,
-    isFacilityDispatcher,
+    isContractorDispatcher,
     showSessionWarning,
     extendSession,
     canManageCompanies,
     canManageUsers,
-    canManageFacilities,
+    canManageContractors,
     canAssignDrivers,
     canViewAllTrips,
     canViewFinancialReports,

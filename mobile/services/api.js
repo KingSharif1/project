@@ -62,7 +62,7 @@ class APIService {
 
   // Authentication
   async login(email, password, userType) {
-    const data = await this.request('/mobile-auth/login', {
+    const data = await this.request('/auth/login', {
       method: 'POST',
       body: JSON.stringify({ email, password, userType }),
     });
@@ -88,7 +88,7 @@ class APIService {
 
   async logout() {
     try {
-      await this.request('/mobile-auth/logout', { method: 'POST' });
+      await this.request('/auth/logout', { method: 'POST' });
     } catch (error) {
       console.error('Logout error:', error);
     } finally {
@@ -101,7 +101,7 @@ class APIService {
 
   async refreshToken() {
     const refreshToken = await AsyncStorage.getItem('refreshToken');
-    const data = await this.request('/mobile-auth/refresh', {
+    const data = await this.request('/auth/refresh', {
       method: 'POST',
       body: JSON.stringify({ refreshToken }),
     });
@@ -121,43 +121,43 @@ export class DriverAPI extends APIService {
     const params = new URLSearchParams();
     if (timeframe) params.append('timeframe', timeframe);
     const query = params.toString() ? `?${params.toString()}` : '';
-    return await this.request(`/driver-mobile/trips${query}`);
+    return await this.request(`/driver/trips${query}`);
   }
 
   async updateTripStatus(tripId, status, latitude, longitude, notes) {
-    return await this.request(`/driver-mobile/trip/${tripId}/status`, {
-      method: 'PUT',
+    return await this.request(`/driver/trips/${tripId}/status`, {
+      method: 'POST',
       body: JSON.stringify({ status, latitude, longitude, notes }),
     });
   }
 
   async updateLocation(latitude, longitude, status) {
-    return await this.request('/driver-mobile/location', {
+    return await this.request('/driver/location', {
       method: 'POST',
       body: JSON.stringify({ latitude, longitude, status }),
     });
   }
 
   async checkIn(action, latitude, longitude) {
-    return await this.request('/driver-mobile/check-in', {
+    return await this.request('/driver/check-in', {
       method: 'POST',
       body: JSON.stringify({ action, latitude, longitude }),
     });
   }
 
   async getProfile() {
-    return await this.request('/driver-mobile/profile');
+    return await this.request('/driver/profile');
   }
 
   async updateProfile(updates) {
-    return await this.request('/driver-mobile/profile', {
+    return await this.request('/driver/profile', {
       method: 'PUT',
       body: JSON.stringify(updates),
     });
   }
 
   async saveSignature(tripId, signatureData) {
-    return await this.request(`/driver-mobile/trip/${tripId}/signature`, {
+    return await this.request(`/driver/trips/${tripId}/signature`, {
       method: 'POST',
       body: JSON.stringify(signatureData),
     });
@@ -168,33 +168,33 @@ export class DriverAPI extends APIService {
 export class PatientAPI extends APIService {
   async getTrips(upcoming = false) {
     const query = upcoming ? '?upcoming=true' : '';
-    return await this.request(`/patient-mobile/trips${query}`);
+    return await this.request(`/patient/trips${query}`);
   }
 
   async getTrip(tripId) {
-    return await this.request(`/patient-mobile/${tripId}`);
+    return await this.request(`/patient/trips/${tripId}`);
   }
 
   async requestTrip(tripData) {
-    return await this.request('/patient-mobile/trip', {
+    return await this.request('/patient/trips', {
       method: 'POST',
       body: JSON.stringify(tripData),
     });
   }
 
   async cancelTrip(tripId, reason) {
-    return await this.request(`/patient-mobile/trip/${tripId}/cancel`, {
+    return await this.request(`/patient/trips/${tripId}/cancel`, {
       method: 'POST',
       body: JSON.stringify({ reason }),
     });
   }
 
   async getProfile() {
-    return await this.request('/patient-mobile/profile');
+    return await this.request('/patient/profile');
   }
 
   async updateProfile(updates) {
-    return await this.request('/patient-mobile/profile', {
+    return await this.request('/patient/profile', {
       method: 'PUT',
       body: JSON.stringify(updates),
     });

@@ -35,19 +35,24 @@ router.get('/', async (req, res) => {
     // Transform to frontend format
     const vehicles = data.map(v => ({
       id: v.id,
+      vehicleName: v.vehicle_name,
       licensePlate: v.license_plate,
       make: v.make,
       model: v.model,
       year: v.year,
       vin: v.vin,
       vehicleType: v.vehicle_type,
+      ownershipType: v.ownership_type || 'company',
       capacity: v.capacity,
       wheelchairAccessible: v.wheelchair_accessible,
       stretcherCapable: v.stretcher_capable,
       status: v.status,
+      lastMaintenanceDate: v.last_maintenance_date,
       insuranceExpiry: v.insurance_expiry,
       registrationExpiry: v.registration_expiry,
       inspectionExpiry: v.inspection_expiry,
+      assignedDriverId: v.assigned_driver_id,
+      color: v.color || null,
       clinicId: v.clinic_id,
       createdAt: v.created_at,
       updatedAt: v.updated_at,
@@ -94,19 +99,24 @@ router.post('/', requireRole('superadmin', 'admin', 'dispatcher'), async (req, r
   try {
     const { userId } = req.user;
     const {
+      vehicleName,
       licensePlate,
       make,
       model,
       year,
       vin,
       vehicleType,
+      ownershipType,
       capacity,
       wheelchairAccessible,
       stretcherCapable,
+      lastMaintenanceDate,
       insuranceExpiry,
       registrationExpiry,
       inspectionExpiry,
       clinicId,
+      color,
+      assignedDriverId,
     } = req.body;
 
     // Validate required fields
@@ -120,19 +130,24 @@ router.post('/', requireRole('superadmin', 'admin', 'dispatcher'), async (req, r
     const { data, error } = await supabase
       .from('vehicles')
       .insert({
+        vehicle_name: vehicleName || null,
         license_plate: licensePlate,
         make,
         model,
         year: year || null,
         vin: vin || null,
         vehicle_type: vehicleType || 'sedan',
+        ownership_type: ownershipType || 'company',
         capacity: capacity || 4,
         wheelchair_accessible: wheelchairAccessible || false,
         stretcher_capable: stretcherCapable || false,
-        status: 'active',
+        status: 'available',
+        last_maintenance_date: lastMaintenanceDate || null,
         insurance_expiry: insuranceExpiry || null,
         registration_expiry: registrationExpiry || null,
         inspection_expiry: inspectionExpiry || null,
+        color: color || null,
+        assigned_driver_id: assignedDriverId || null,
         clinic_id: vehicleClinicId,
       })
       .select()
@@ -171,19 +186,24 @@ router.put('/:id', requireRole('superadmin', 'admin', 'dispatcher'), async (req,
 
     // Build update object
     const vehicleUpdates = {};
+    if (updates.vehicleName !== undefined) vehicleUpdates.vehicle_name = updates.vehicleName;
     if (updates.licensePlate !== undefined) vehicleUpdates.license_plate = updates.licensePlate;
     if (updates.make !== undefined) vehicleUpdates.make = updates.make;
     if (updates.model !== undefined) vehicleUpdates.model = updates.model;
     if (updates.year !== undefined) vehicleUpdates.year = updates.year;
     if (updates.vin !== undefined) vehicleUpdates.vin = updates.vin;
     if (updates.vehicleType !== undefined) vehicleUpdates.vehicle_type = updates.vehicleType;
+    if (updates.ownershipType !== undefined) vehicleUpdates.ownership_type = updates.ownershipType;
     if (updates.capacity !== undefined) vehicleUpdates.capacity = updates.capacity;
     if (updates.wheelchairAccessible !== undefined) vehicleUpdates.wheelchair_accessible = updates.wheelchairAccessible;
     if (updates.stretcherCapable !== undefined) vehicleUpdates.stretcher_capable = updates.stretcherCapable;
     if (updates.status !== undefined) vehicleUpdates.status = updates.status;
+    if (updates.lastMaintenanceDate !== undefined) vehicleUpdates.last_maintenance_date = updates.lastMaintenanceDate;
     if (updates.insuranceExpiry !== undefined) vehicleUpdates.insurance_expiry = updates.insuranceExpiry;
     if (updates.registrationExpiry !== undefined) vehicleUpdates.registration_expiry = updates.registrationExpiry;
     if (updates.inspectionExpiry !== undefined) vehicleUpdates.inspection_expiry = updates.inspectionExpiry;
+    if (updates.color !== undefined) vehicleUpdates.color = updates.color;
+    if (updates.assignedDriverId !== undefined) vehicleUpdates.assigned_driver_id = updates.assignedDriverId || null;
     vehicleUpdates.updated_at = new Date().toISOString();
 
     const { data, error } = await supabase
@@ -257,6 +277,129 @@ router.delete('/:id', requireRole('superadmin', 'admin'), async (req, res) => {
     res.json({ success: true, message: 'Vehicle deleted successfully' });
   } catch (error) {
     console.error('Error in DELETE /vehicles/:id:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+/**
+ * GET /api/vehicles/:id/documents
+ * Get all documents for a vehicle
+ */
+router.get('/:id/documents', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const { data, error } = await supabase
+      .from('document_submissions')
+      .select('*')
+      .eq('vehicle_id', id)
+      .order('submission_date', { ascending: false });
+
+    if (error) {
+      console.error('Error fetching vehicle documents:', error);
+      return res.status(500).json({ error: 'Failed to fetch documents' });
+    }
+
+    res.json({ success: true, data: data || [] });
+  } catch (error) {
+    console.error('Error in GET /vehicles/:id/documents:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+/**
+ * POST /api/vehicles/:id/documents
+ * Upload a document for a vehicle
+ */
+router.post('/:id/documents', requireRole('superadmin', 'admin', 'dispatcher'), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { documentType, fileName, fileUrl, fileSize, expiryDate } = req.body;
+
+    if (!documentType || !fileName) {
+      return res.status(400).json({ error: 'Document type and file name are required' });
+    }
+
+    // Delete any existing document of the same type for this vehicle (replace, not duplicate)
+    const { data: existing } = await supabase
+      .from('document_submissions')
+      .select('id, file_url')
+      .eq('vehicle_id', id)
+      .eq('document_type', documentType);
+
+    if (existing && existing.length > 0) {
+      for (const old of existing) {
+        if (old.file_url && !old.file_url.startsWith('pending://')) {
+          await supabase.storage.from('vehicle-documents').remove([old.file_url]);
+        }
+      }
+      const oldIds = existing.map(e => e.id);
+      await supabase.from('document_submissions').delete().in('id', oldIds);
+    }
+
+    const { data, error } = await supabase
+      .from('document_submissions')
+      .insert({
+        vehicle_id: id,
+        document_type: documentType,
+        file_name: fileName,
+        file_url: fileUrl,
+        file_size: fileSize || null,
+        expiry_date: expiryDate || null,
+        submission_date: new Date().toISOString(),
+        status: 'pending',
+      })
+      .select()
+      .single();
+
+    if (error) {
+      console.error('Error uploading vehicle document:', error);
+      return res.status(500).json({ error: 'Failed to save document record' });
+    }
+
+    res.status(201).json({ success: true, data });
+  } catch (error) {
+    console.error('Error in POST /vehicles/:id/documents:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+/**
+ * DELETE /api/vehicles/:id/documents/:docId
+ * Delete a document for a vehicle
+ */
+router.delete('/:id/documents/:docId', requireRole('superadmin', 'admin'), async (req, res) => {
+  try {
+    const { docId } = req.params;
+
+    // Get the document to find the file URL for storage cleanup
+    const { data: doc } = await supabase
+      .from('document_submissions')
+      .select('file_url')
+      .eq('id', docId)
+      .single();
+
+    const { error } = await supabase
+      .from('document_submissions')
+      .delete()
+      .eq('id', docId);
+
+    if (error) {
+      console.error('Error deleting vehicle document:', error);
+      return res.status(500).json({ error: 'Failed to delete document' });
+    }
+
+    // Try to clean up storage file if it exists
+    if (doc?.file_url && !doc.file_url.startsWith('pending://')) {
+      const path = doc.file_url.includes('/vehicle-documents/')
+        ? doc.file_url.split('/vehicle-documents/')[1]
+        : doc.file_url;
+      await supabase.storage.from('vehicle-documents').remove([path]);
+    }
+
+    res.json({ success: true, message: 'Document deleted' });
+  } catch (error) {
+    console.error('Error in DELETE /vehicles/:id/documents/:docId:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });

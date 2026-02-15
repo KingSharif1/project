@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Building2, Plus, Users, Search, Truck, Eye, UserPlus, CheckCircle, XCircle, Edit2 } from 'lucide-react';
-import { supabase } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
+import * as api from '../services/api';
 import { Clinic } from '../types';
 import Toast, { ToastType } from './Toast';
 
@@ -94,29 +94,18 @@ export const SuperAdminDashboard: React.FC = () => {
   const loadCompanies = async () => {
     setIsLoading(true);
     try {
-      // Load all companies (clinics)
-      const { data: clinicsData, error: clinicsError } = await supabase
-        .from('clinics')
-        .select('*')
-        .order('name');
+      // Load all companies with stats via backend API
+      const result = await api.getClinicStats();
+      setCompanies(result.data.clinics || []);
 
-      if (clinicsError) throw clinicsError;
-      setCompanies(clinicsData || []);
-
-      // Load stats for each company
+      // Map stats to expected format
       const stats: Record<string, CompanyStats> = {};
-      for (const clinic of (clinicsData || []) as any[]) {
-        const [tripsResult, driversResult, usersResult] = await Promise.all([
-          supabase.from('trips').select('id', { count: 'exact' }).eq('clinic_id', clinic.id),
-          supabase.from('drivers').select('id', { count: 'exact' }).eq('clinic_id', clinic.id),
-          supabase.from('users').select('id', { count: 'exact' }).eq('clinic_id', clinic.id),
-        ]);
-
-        stats[clinic.id] = {
-          clinicId: clinic.id,
-          totalTrips: tripsResult.count || 0,
-          totalDrivers: driversResult.count || 0,
-          totalUsers: usersResult.count || 0,
+      for (const [clinicId, clinicStats] of Object.entries(result.data.stats || {})) {
+        stats[clinicId] = {
+          clinicId,
+          totalTrips: (clinicStats as any).tripCount || 0,
+          totalDrivers: (clinicStats as any).driverCount || 0,
+          totalUsers: (clinicStats as any).userCount || 0,
           activeTripsToday: 0,
         };
       }
@@ -204,13 +193,7 @@ export const SuperAdminDashboard: React.FC = () => {
   const handleToggleCompanyStatus = async (clinic: any) => {
     try {
       const currentStatus = clinic.is_active;
-      const { error } = await supabase
-        .from('clinics')
-        .update({ is_active: !currentStatus } as any)
-        .eq('id', clinic.id);
-
-      if (error) throw error;
-      
+      await api.updateClinic(clinic.id, { isActive: !currentStatus });
       showToast(`Company ${currentStatus ? 'deactivated' : 'activated'} successfully`, 'success');
       loadCompanies();
     } catch (error) {
@@ -221,14 +204,11 @@ export const SuperAdminDashboard: React.FC = () => {
 
   const handleViewCompany = async (company: any) => {
     setSelectedCompany(company);
-    // Load users and drivers for this company
+    // Load users and drivers for this company via backend API
     try {
-      const [usersResult, driversResult] = await Promise.all([
-        supabase.from('users').select('*').eq('clinic_id', company.id),
-        supabase.from('drivers').select('*').eq('clinic_id', company.id),
-      ]);
-      setCompanyUsers((usersResult.data || []) as CompanyUser[]);
-      setCompanyDrivers((driversResult.data || []) as CompanyDriver[]);
+      const result = await api.getClinicMembers(company.id);
+      setCompanyUsers((result.data.users || []) as CompanyUser[]);
+      setCompanyDrivers((result.data.drivers || []) as CompanyDriver[]);
     } catch (error) {
       console.error('Error loading company details:', error);
     }
@@ -251,19 +231,13 @@ export const SuperAdminDashboard: React.FC = () => {
     setIsSubmitting(true);
 
     try {
-      const { error } = await supabase
-        .from('clinics')
-        .update({
-          name: editFormData.name,
-          company_code: editFormData.company_code,
-          address: editFormData.address,
-          phone: editFormData.phone,
-          email: editFormData.email,
-          updated_at: new Date().toISOString(),
-        } as any)
-        .eq('id', selectedCompany.id);
-
-      if (error) throw error;
+      await api.updateClinic(selectedCompany.id, {
+        name: editFormData.name,
+        companyCode: editFormData.company_code,
+        address: editFormData.address,
+        phone: editFormData.phone,
+        email: editFormData.email,
+      });
 
       showToast('Company updated successfully!', 'success');
       setShowEditModal(false);

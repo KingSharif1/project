@@ -10,14 +10,14 @@ import { Dashboard } from './components/Dashboard';
 import { TripManagement } from './components/TripManagement';
 import { DriverManagement } from './components/DriverManagement';
 import { VehicleManagement } from './components/VehicleManagement';
-import { FacilityManagement } from './components/FacilityManagement';
+import { ContractorManagement } from './components/ContractorManagement';
 import { RiderManagement } from './components/RiderManagement';
-import { Billing } from './components/Billing';
 import { Reports } from './components/Reports';
+import { DriverPayouts } from './components/DriverPayouts';
 import { UserManagement } from './components/UserManagement';
 import { ActivityTracker } from './components/ActivityTracker';
 import { SessionWarningModal } from './components/SessionWarningModal';
-import { HIPAACompliance } from './components/HIPAACompliance';
+// import { HIPAACompliance } from './components/HIPAACompliance';
 import { AdvancedAnalytics } from './components/AdvancedAnalytics';
 import { Settings } from './components/Settings';
 import { RealtimeTracking } from './components/RealtimeTracking';
@@ -27,21 +27,18 @@ import { NotificationCenter } from './components/NotificationCenter';
 import { SuperAdminDashboard } from './components/SuperAdminDashboard';
 
 
-type View = 'dashboard' | 'trips' | 'calendar' | 'tracking' | 'drivers' | 'riders' | 'vehicles' | 'facilities' | 'billing' | 'users' | 'reports' | 'analytics' | 'activity' | 'hipaa' | 'settings' | 'reminders' | 'superadmin';
+type View = 'dashboard' | 'trips' | 'calendar' | 'tracking' | 'drivers' | 'riders' | 'vehicles' | 'facilities' | 'users' | 'reports' | 'payouts' | 'analytics' | 'activity' | 'hipaa' | 'settings' | 'reminders' | 'superadmin';
 
 const MainApp: React.FC = () => {
   const { 
     user, 
     logout, 
     isAdmin, 
-    isFacilityDispatcher,
     isRegularDispatcher,
     showSessionWarning, 
     extendSession,
     canManageUsers,
-    canManageFacilities,
     canManageDrivers,
-    canViewFinancialReports,
   } = useAuth();
   const [currentView, setCurrentView] = useState<View>('trips');
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -72,8 +69,8 @@ const MainApp: React.FC = () => {
 
   // Navigation sections with permission-based visibility
   // Admin: Full access to their company
-  // Regular Dispatcher: Most features except user management, facility creation, financial reports
-  // Facility Dispatcher: Limited to trips, riders, and their facility info
+  // Regular Dispatcher: Most features except user management, contractor creation, financial reports
+  // Contractor Dispatcher: Limited to trips, riders, and their contractor info
   // Note: Super Admin has a completely separate interface (see AppContent)
   const navigationSections = [
     {
@@ -91,7 +88,7 @@ const MainApp: React.FC = () => {
       items: [
         { id: 'trips' as View, name: 'Trip Management', icon: Car, visible: true }, // All roles
         { id: 'calendar' as View, name: 'Calendar View', icon: CalendarIcon, visible: true }, // All roles
-        { id: 'tracking' as View, name: 'Live Tracking', icon: MapPin, visible: isAdmin || isRegularDispatcher }, // Not for facility dispatcher
+        { id: 'tracking' as View, name: 'Live Tracking', icon: MapPin, visible: isAdmin || isRegularDispatcher }, // Not for contractor dispatcher
         { id: 'reminders' as View, name: 'Reminders', icon: Bell, visible: true }, // All roles
       ]
     },
@@ -104,7 +101,7 @@ const MainApp: React.FC = () => {
         { id: 'drivers' as View, name: 'Drivers', icon: Users, visible: canManageDrivers },
         { id: 'vehicles' as View, name: 'Vehicles', icon: Truck, visible: canManageDrivers }, // Same as drivers
         { id: 'riders' as View, name: 'Riders', icon: UserCircle, visible: true }, // All roles
-        { id: 'facilities' as View, name: 'Facilities', icon: Building2, visible: isAdmin || isRegularDispatcher }, // View for regular, create for admin
+        { id: 'facilities' as View, name: 'Contractors', icon: Building2, visible: isAdmin || isRegularDispatcher }, // View for regular, create for admin
       ]
     },
     {
@@ -112,8 +109,7 @@ const MainApp: React.FC = () => {
       expanded: reportsExpanded,
       setExpanded: setReportsExpanded,
       items: [
-        { id: 'billing' as View, name: 'Billing', icon: DollarSign, visible: canViewFinancialReports },
-        { id: 'reports' as View, name: 'Reports', icon: BarChart3, visible: isAdmin || isRegularDispatcher }, // Not for facility dispatcher
+        { id: 'reports' as View, name: 'Reports', icon: BarChart3, visible: isAdmin || isRegularDispatcher }, // Not for contractor dispatcher
         { id: 'analytics' as View, name: 'Analytics', icon: TrendingUp, visible: isAdmin }, // Admin only
       ]
     },
@@ -155,15 +151,15 @@ const MainApp: React.FC = () => {
       case 'vehicles':
         return <VehicleManagement />;
       case 'facilities':
-        return <FacilityManagement />;
-      case 'billing':
-        return <Billing />;
+        return <ContractorManagement />;
       case 'reports':
         return <Reports />;
+      case 'payouts':
+        return <DriverPayouts />;
       case 'analytics':
         return <AdvancedAnalytics />;
-      case 'hipaa':
-        return <HIPAACompliance />;
+      // case 'hipaa':
+      //   return <HIPAACompliance />;
       case 'users':
         return <UserManagement />;
       case 'activity':
@@ -233,7 +229,7 @@ const MainApp: React.FC = () => {
 
                 <button
                   onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
-                  className="absolute -right-3 top-24 w-6 h-6 bg-white border border-gray-200 rounded-full flex items-center justify-center text-gray-600 hover:text-blue-600 hover:border-blue-600 transition-colors shadow-sm z-10 focus:outline-none hidden lg:flex"
+                  className="absolute -right-3 top-24 w-6 h-6 bg-white border border-gray-200 rounded-full items-center justify-center text-gray-600 hover:text-blue-600 hover:border-blue-600 transition-colors shadow-sm z-10 focus:outline-none hidden lg:flex"
                   title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
                 >
                   {sidebarCollapsed ? <ChevronRight className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5 rotate-90" />}

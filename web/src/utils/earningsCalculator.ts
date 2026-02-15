@@ -1,16 +1,8 @@
-import { supabase } from '../lib/supabase';
+import * as api from '../services/api';
 
 interface Driver {
   id: string;
-  ambulatory_rate?: number;
-  wheelchair_rate?: number;
-  stretcher_rate?: number;
-  ambulatory_base_miles?: number;
-  wheelchair_base_miles?: number;
-  stretcher_base_miles?: number;
-  ambulatory_additional_mile_rate?: number;
-  wheelchair_additional_mile_rate?: number;
-  stretcher_additional_mile_rate?: number;
+  rates?: any; // Compact JSONB: { ambulatory: [...[from,to,rate], additionalRate], ..., deductions: [rental, insurance, %] }
 }
 
 interface Trip {
@@ -26,123 +18,80 @@ interface Trip {
 export const calculateDriverEarnings = (driver: Driver, trip: Trip) => {
   let baseFare = 0;
   let mileagePay = 0;
-  const waitTimePay = 0; // Can be customized based on wait time rate
+  const waitTimePay = 0;
   let bonus = 0;
+  let deductionTotal = 0;
 
   const tripType = trip.trip_type?.toLowerCase() || 'ambulatory';
   const distance = trip.distance_miles || 0;
+  const roundedMiles = Math.round(distance);
 
-  // Calculate base fare and mileage based on trip type and driver rates
-  switch (tripType) {
-    case 'wheelchair':
-      baseFare = driver.wheelchair_rate || 50;
-      const wheelchairBaseMiles = driver.wheelchair_base_miles || 5;
-      if (distance > wheelchairBaseMiles) {
-        const additionalMiles = distance - wheelchairBaseMiles;
-        mileagePay = additionalMiles * (driver.wheelchair_additional_mile_rate || 2.5);
-      }
-      break;
+  const rates = driver.rates || {};
+  const serviceLevelRates = rates[tripType] || rates['ambulatory'];
 
-    case 'stretcher':
-      baseFare = driver.stretcher_rate || 75;
-      const stretcherBaseMiles = driver.stretcher_base_miles || 5;
-      if (distance > stretcherBaseMiles) {
-        const additionalMiles = distance - stretcherBaseMiles;
-        mileagePay = additionalMiles * (driver.stretcher_additional_mile_rate || 3);
-      }
-      break;
+  if (serviceLevelRates && Array.isArray(serviceLevelRates) && serviceLevelRates.length > 0) {
+    // Parse compact format: [...[from,to,rate], additionalRate]
+    const additionalRate = typeof serviceLevelRates[serviceLevelRates.length - 1] === 'number' && !Array.isArray(serviceLevelRates[serviceLevelRates.length - 1])
+      ? serviceLevelRates[serviceLevelRates.length - 1]
+      : 0;
+    const tiers = serviceLevelRates.filter((item: any) => Array.isArray(item));
 
-    case 'ambulatory':
-    default:
-      baseFare = driver.ambulatory_rate || 35;
-      const ambulatoryBaseMiles = driver.ambulatory_base_miles || 5;
-      if (distance > ambulatoryBaseMiles) {
-        const additionalMiles = distance - ambulatoryBaseMiles;
-        mileagePay = additionalMiles * (driver.ambulatory_additional_mile_rate || 2);
+    // Find applicable tier [from, to, rate]
+    let applicableTier = tiers.find((t: number[]) => roundedMiles >= t[0] && roundedMiles <= t[1]);
+    if (!applicableTier && tiers.length > 0) applicableTier = tiers[tiers.length - 1];
+
+    if (applicableTier) {
+      baseFare = applicableTier[2];
+      const baseMiles = applicableTier[1];
+      if (roundedMiles > baseMiles && additionalRate > 0) {
+        mileagePay = (roundedMiles - baseMiles) * additionalRate;
       }
-      break;
+    }
+
+    // Apply deductions [rental, insurance, %]
+    const deductions = rates.deductions;
+    if (deductions && Array.isArray(deductions)) {
+      const [rental, insurance, percentage] = deductions;
+      if (rental) deductionTotal += rental;
+      if (insurance) deductionTotal += insurance;
+      if (percentage) deductionTotal += (baseFare + mileagePay) * (percentage / 100);
+    }
+  } else {
+    // Default rates if no tiers configured
+    const defaults: Record<string, { base: number; baseMiles: number; additional: number }> = {
+      ambulatory: { base: 35, baseMiles: 5, additional: 2 },
+      wheelchair: { base: 50, baseMiles: 5, additional: 2.5 },
+      stretcher: { base: 75, baseMiles: 5, additional: 3 },
+    };
+    const d = defaults[tripType] || defaults['ambulatory'];
+    baseFare = d.base;
+    if (distance > d.baseMiles) {
+      mileagePay = (distance - d.baseMiles) * d.additional;
+    }
   }
 
-  // Calculate bonuses (can be customized)
-  // Example: Bonus for long-distance trips
-  if (distance > 50) {
-    bonus = 10;
-  }
+  if (distance > 50) bonus = 10;
 
-  // Example: Bonus for weekend/night trips
-  // This would require trip time information
-
-  const totalEarnings = baseFare + mileagePay + waitTimePay + bonus;
+  const totalEarnings = Math.max(0, baseFare + mileagePay + waitTimePay + bonus - deductionTotal);
 
   return {
     base_fare: baseFare,
     mileage_pay: mileagePay,
     wait_time_pay: waitTimePay,
     bonus,
-    total_earnings: totalEarnings,
+    total_earnings: Math.round(totalEarnings * 100) / 100,
   };
 };
 
 export const createDriverEarning = async (tripId: string, driverId: string) => {
   try {
-    // Get driver details
-    const { data: driver, error: driverError } = await supabase
-      .from('drivers')
-      .select('*')
-      .eq('id', driverId)
-      .single();
-
-    if (driverError || !driver) {
-      console.error('Error fetching driver:', driverError);
-      return null;
+    // Create earnings via backend API
+    const result = await api.createDriverEarning(tripId, driverId);
+    if (result.success) {
+      console.log('Driver earnings created:', result.data);
+      return result.data;
     }
-
-    // Get trip details
-    const { data: trip, error: tripError } = await supabase
-      .from('trips')
-      .select('*')
-      .eq('id', tripId)
-      .single();
-
-    if (tripError || !trip) {
-      console.error('Error fetching trip:', tripError);
-      return null;
-    }
-
-    // Check if earnings already exist for this trip
-    const { data: existingEarning } = await supabase
-      .from('driver_earnings')
-      .select('id')
-      .eq('trip_id', tripId)
-      .single();
-
-    if (existingEarning) {
-      console.log('Earnings already exist for this trip');
-      return existingEarning;
-    }
-
-    // Calculate earnings
-    const earnings = calculateDriverEarnings(driver, trip);
-
-    // Create earnings record
-    const { data, error } = await supabase
-      .from('driver_earnings')
-      .insert({
-        driver_id: driverId,
-        trip_id: tripId,
-        ...earnings,
-        payment_status: 'pending',
-      })
-      .select()
-      .single();
-
-    if (error) {
-      console.error('Error creating earnings:', error);
-      return null;
-    }
-
-    console.log('Driver earnings created:', data);
-    return data;
+    return null;
   } catch (error) {
     console.error('Error in createDriverEarning:', error);
     return null;
@@ -151,35 +100,18 @@ export const createDriverEarning = async (tripId: string, driverId: string) => {
 
 export const getDriverEarningsSummary = async (driverId: string, startDate?: string, endDate?: string) => {
   try {
-    let query = supabase
-      .from('driver_earnings')
-      .select('*')
-      .eq('driver_id', driverId);
-
-    if (startDate) {
-      query = query.gte('created_at', startDate);
-    }
-
-    if (endDate) {
-      query = query.lte('created_at', endDate);
-    }
-
-    const { data, error } = await query;
-
-    if (error) {
-      console.error('Error fetching earnings:', error);
-      return null;
-    }
+    const result = await api.getDriverEarnings(driverId, startDate, endDate);
+    const data = result.data || [];
 
     const summary = {
-      totalEarnings: data?.reduce((sum, e) => sum + e.total_earnings, 0) || 0,
-      pendingEarnings: data?.filter(e => e.payment_status === 'pending').reduce((sum, e) => sum + e.total_earnings, 0) || 0,
-      paidEarnings: data?.filter(e => e.payment_status === 'paid').reduce((sum, e) => sum + e.total_earnings, 0) || 0,
-      tripCount: data?.length || 0,
-      totalBaseFare: data?.reduce((sum, e) => sum + e.base_fare, 0) || 0,
-      totalMileagePay: data?.reduce((sum, e) => sum + e.mileage_pay, 0) || 0,
-      totalWaitTimePay: data?.reduce((sum, e) => sum + e.wait_time_pay, 0) || 0,
-      totalBonus: data?.reduce((sum, e) => sum + e.bonus, 0) || 0,
+      totalEarnings: data.reduce((sum: number, e: any) => sum + e.total_earnings, 0),
+      pendingEarnings: data.filter((e: any) => e.payment_status === 'pending').reduce((sum: number, e: any) => sum + e.total_earnings, 0),
+      paidEarnings: data.filter((e: any) => e.payment_status === 'paid').reduce((sum: number, e: any) => sum + e.total_earnings, 0),
+      tripCount: data.length,
+      totalBaseFare: data.reduce((sum: number, e: any) => sum + e.base_fare, 0),
+      totalMileagePay: data.reduce((sum: number, e: any) => sum + e.mileage_pay, 0),
+      totalWaitTimePay: data.reduce((sum: number, e: any) => sum + e.wait_time_pay, 0),
+      totalBonus: data.reduce((sum: number, e: any) => sum + e.bonus, 0),
     };
 
     return summary;
@@ -191,21 +123,8 @@ export const getDriverEarningsSummary = async (driverId: string, startDate?: str
 
 export const markEarningsAsPaid = async (earningIds: string[], paymentMethod: string = 'direct_deposit') => {
   try {
-    const { error } = await supabase
-      .from('driver_earnings')
-      .update({
-        payment_status: 'paid',
-        paid_at: new Date().toISOString(),
-        payment_method: paymentMethod,
-      })
-      .in('id', earningIds);
-
-    if (error) {
-      console.error('Error marking earnings as paid:', error);
-      return false;
-    }
-
-    return true;
+    const result = await api.markEarningsAsPaid(earningIds, paymentMethod);
+    return result.success;
   } catch (error) {
     console.error('Error in markEarningsAsPaid:', error);
     return false;
@@ -214,32 +133,8 @@ export const markEarningsAsPaid = async (earningIds: string[], paymentMethod: st
 
 export const getAllDriversEarningsSummary = async (startDate?: string, endDate?: string) => {
   try {
-    let query = supabase
-      .from('driver_earnings')
-      .select(`
-        *,
-        drivers (
-          id,
-          name,
-          first_name,
-          last_name
-        )
-      `);
-
-    if (startDate) {
-      query = query.gte('created_at', startDate);
-    }
-
-    if (endDate) {
-      query = query.lte('created_at', endDate);
-    }
-
-    const { data, error } = await query;
-
-    if (error) {
-      console.error('Error fetching all earnings:', error);
-      return [];
-    }
+    const result = await api.getAllDriversEarnings(startDate, endDate);
+    const data = result.data || [];
 
     // Group by driver
     const driverEarnings = new Map();

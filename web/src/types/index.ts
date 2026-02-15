@@ -20,7 +20,7 @@ export interface Clinic {
   updatedAt: string;
 }
 
-export interface Facility {
+export interface Contractor {
   id: string;
   name: string;
   address: string;
@@ -29,32 +29,25 @@ export interface Facility {
   zipCode?: string;
   phone: string;
   email: string;
-  isActive: boolean;
   contactPerson?: string;
   notes?: string;
   clinicId: string;
-  ambulatoryRate?: number;
-  wheelchairRate?: number;
-  stretcherRate?: number;
-  cancellationRate?: number;
-  noShowRate?: number;
-  billingContact?: string;
-  billingEmail?: string;
-  billingPhone?: string;
-  paymentTerms?: string;
-  taxId?: string;
+  rateTiers?: any;
   createdAt: string;
   updatedAt: string;
 }
 
-export type AddFacilityData = Omit<Facility, 'id' | 'createdAt' | 'updatedAt'> & {
+export type AddContractorData = Omit<Contractor, 'id' | 'createdAt' | 'updatedAt'> & {
   username?: string;
 };
+
+export type Facility = Contractor;
+export type AddFacilityData = AddContractorData;
 
 export interface TripSource {
   id: string;
   name: string;
-  type: 'broker' | 'facility' | 'private' | 'other';
+  type: 'broker' | 'contractor' | 'private' | 'other';
   phone?: string;
   email?: string;
   address?: string;
@@ -77,7 +70,7 @@ export interface User {
   zipCode?: string;
   role: 'superadmin' | 'admin' | 'dispatcher';
   clinicId?: string;
-  facilityId?: string; // If set, user is a Facility Dispatcher; if not, Regular (Company) Dispatcher
+  contractorId?: string; // If set, user is a Contractor Dispatcher; if not, Regular (Company) Dispatcher
   isActive: boolean;
   temporaryPassword?: string;
   requirePasswordChange?: boolean;
@@ -94,31 +87,17 @@ export interface Driver {
   email: string;
   phone: string;
   licenseNumber: string;
-  licenseExpiry?: string;
-  certificationExpiry?: string;
   temporaryPassword?: string;
   status: 'available' | 'on_trip' | 'offline' | 'off_duty';
-  rating: number;
-  totalTrips: number;
+  isActive: boolean;
+  rating?: number;
+  totalTrips?: number;
   currentLatitude?: number;
   currentLongitude?: number;
+  assignedVehicleId?: string;
+  assignedVehicle?: string;
   clinicId?: string;
-  ambulatoryRate?: number;
-  ambulatoryBaseMiles?: number;
-  ambulatoryAdditionalMileRate?: number;
-  wheelchairRate?: number;
-  wheelchairBaseMiles?: number;
-  wheelchairAdditionalMileRate?: number;
-  stretcherRate?: number;
-  stretcherBaseMiles?: number;
-  stretcherAdditionalMileRate?: number;
-  cancellationRate?: number;
-  noShowRate?: number;
-  payoutRate?: number;
-  payoutType?: 'percentage' | 'fixed' | 'per_mile';
-  isActive?: boolean;
-  notes?: string;
-  createdBy?: string;
+  rates?: any;
   createdAt: string;
   updatedAt: string;
 }
@@ -146,7 +125,7 @@ export interface DriverPayout {
   updatedAt: string;
 }
 
-export interface FacilityRevenue {
+export interface ContractorRevenue {
   id: string;
   clinicId: string;
   revenueRate: number;
@@ -158,21 +137,25 @@ export interface FacilityRevenue {
 
 export interface Vehicle {
   id: string;
+  vehicleName?: string;
   make: string;
   model: string;
   year: number;
   licensePlate: string;
   vin: string;
-  type: 'sedan' | 'suv' | 'van' | 'wheelchair-accessible';
+  vehicleType: 'sedan' | 'suv' | 'van' | 'wheelchair-accessible';
+  ownershipType: 'company' | 'private';
+  color?: string;
+  capacity: number;
+  wheelchairAccessible: boolean;
+  stretcherCapable: boolean;
   status: 'available' | 'in_use' | 'maintenance' | 'retired';
-  mileage: number;
-  lastServiceDate?: string;
-  nextServiceDue?: string;
+  lastMaintenanceDate?: string;
   insuranceExpiry?: string;
   registrationExpiry?: string;
-  clinicId: string;
+  inspectionExpiry?: string;
+  clinicId?: string;
   assignedDriverId?: string;
-  createdBy?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -196,7 +179,7 @@ export interface Trip {
   patientId?: string;
   driverId?: string;
   vehicleId?: string;
-  facilityId?: string;
+  contractorId?: string;
   customerName: string;
   firstName?: string;
   lastName?: string;
@@ -343,24 +326,10 @@ export interface Patient {
   lastName: string;
   dateOfBirth?: string;
   phone: string;
-  email?: string;
-  address: string;
-  city: string;
-  state: string;
-  zipCode: string;
-  insuranceProvider?: string;
-  insurancePolicyNumber?: string;
-  insuranceExpiry?: string;
-  mobilityType: 'ambulatory' | 'wheelchair' | 'stretcher';
-  specialNeeds?: string;
-  preferredDriverId?: string;
-  emergencyContactName?: string;
-  emergencyContactPhone?: string;
-  isActive: boolean;
+  accountNumber?: string;
+  serviceLevel?: 'ambulatory' | 'wheelchair' | 'stretcher';
   notes?: string;
   clinicId?: string;
-  dispatcherId?: string;
-  createdBy?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -369,7 +338,7 @@ export interface RecurringTrip {
   id: string;
   templateName: string;
   patientId?: string;
-  facilityId?: string;
+  contractorId?: string;
   pickupAddress: string;
   dropoffAddress: string;
   tripType: 'ambulatory' | 'wheelchair' | 'stretcher';

@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { MapPin, Navigation, Car, Clock, User, Phone, RefreshCw, Map as MapIcon, History, Filter, Calendar } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { Trip, Driver } from '../types';
-import { supabase } from '../lib/supabase';
+import * as api from '../services/api';
 import { loadGoogleMaps } from '../utils/googleMapsLoader';
 import { TripHistoryViewer } from './TripHistoryViewer';
 
@@ -73,15 +73,8 @@ export const RealtimeTracking: React.FC = () => {
 
   const loadDriverLocations = async () => {
     try {
-      const { data, error } = await supabase
-        .from('realtime_driver_locations')
-        .select('*')
-        .order('last_updated', { ascending: false });
-
-      if (error) {
-        console.error('Error loading driver locations:', error);
-        return;
-      }
+      const result = await api.getDriverLocations();
+      const data = result.data || [];
 
       const locationsMap = new Map<string, DriverLocation>();
       data?.forEach(location => {
@@ -96,8 +89,8 @@ export const RealtimeTracking: React.FC = () => {
       if (showMap) {
         updateMapMarkers(locationsMap);
       }
-    } catch (error) {
-      console.error('Error loading driver locations:', error);
+    } catch (_) {
+      // Driver location tracking not configured yet
     }
   };
 
