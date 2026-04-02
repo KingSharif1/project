@@ -21,7 +21,7 @@ export const RiderManagement: React.FC = () => {
         lastName: '',
         dateOfBirth: '',
         phone: '',
-        accountNumber: '',
+        memberId: '',
         serviceLevel: '',
         notes: ''
     });
@@ -32,7 +32,7 @@ export const RiderManagement: React.FC = () => {
             lastName: '',
             dateOfBirth: '',
             phone: '',
-            accountNumber: '',
+            memberId: '',
             serviceLevel: '',
             notes: ''
         });
@@ -47,7 +47,7 @@ export const RiderManagement: React.FC = () => {
                 lastName: rider.lastName,
                 dateOfBirth: rider.dateOfBirth || '',
                 phone: rider.phone,
-                accountNumber: rider.accountNumber || '',
+                memberId: rider.memberId || '',
                 serviceLevel: rider.serviceLevel || '',
                 notes: rider.notes || ''
             });
@@ -65,7 +65,7 @@ export const RiderManagement: React.FC = () => {
                 lastName: formData.lastName,
                 dateOfBirth: formData.dateOfBirth || undefined,
                 phone: formData.phone,
-                accountNumber: formData.accountNumber,
+                memberId: formData.memberId,
                 serviceLevel: (formData.serviceLevel || 'ambulatory') as Patient['serviceLevel'],
                 notes: formData.notes,
                 clinicId: isAdmin ? undefined : user?.clinicId,
@@ -195,9 +195,9 @@ export const RiderManagement: React.FC = () => {
                                         }`}>
                                         {(rider.serviceLevel || 'ambulatory').charAt(0).toUpperCase() + (rider.serviceLevel || 'ambulatory').slice(1)}
                                     </span>
-                                    {rider.accountNumber && (
+                                    {rider.memberId && (
                                         <span className="px-2 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-700">
-                                            #{rider.accountNumber}
+                                            #{rider.memberId}
                                         </span>
                                     )}
                                 </div>
@@ -268,14 +268,14 @@ export const RiderManagement: React.FC = () => {
                         </div>
                     </div>
 
-                    {/* Account Number and Level of Service */}
+                    {/* Member ID and Level of Service */}
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div>
-                            <label className="block text-sm font-semibold text-gray-700 mb-1">Account Number</label>
+                            <label className="block text-sm font-semibold text-gray-700 mb-1">Member ID</label>
                             <input
                                 type="text"
-                                value={formData.accountNumber}
-                                onChange={e => setFormData({ ...formData, accountNumber: e.target.value })}
+                                value={formData.memberId}
+                                onChange={e => setFormData({ ...formData, memberId: e.target.value })}
                                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                             />
                         </div>

@@ -1,11 +1,15 @@
 import { Platform } from 'react-native';
-import { supabase } from './api';
+import { driverAPI } from './api';
 
 let Location;
 
 // Only import native modules on native platforms
 if (Platform.OS !== 'web') {
-  Location = require('expo-location');
+  try {
+    Location = require('expo-location');
+  } catch (e) {
+    console.warn('expo-location not available');
+  }
 }
 
 class LocationService {
@@ -13,11 +17,11 @@ class LocationService {
     this.locationSubscription = null;
     this.isTracking = false;
     this.driverId = null;
+    this.activeTripId = null; // Track which trip is active for breadcrumbs
   }
 
   async requestPermissions() {
-    if (Platform.OS === 'web') {
-      console.log('Location permissions not required on web');
+    if (Platform.OS === 'web' || !Location) {
       return { foreground: true, background: false };
     }
 
@@ -29,7 +33,11 @@ class LocationService {
       }
 
       // Request background permissions for continuous tracking
-      const { status: backgroundStatus } = await Location.requestBackgroundPermissionsAsync();
+      let backgroundStatus = 'denied';
+      try {
+        const bg = await Location.requestBackgroundPermissionsAsync();
+        backgroundStatus = bg.status;
+      } catch (_) {}
 
       return {
         foreground: foregroundStatus === 'granted',
@@ -42,81 +50,76 @@ class LocationService {
   }
 
   async startTracking(driverId, options = {}) {
-    if (Platform.OS === 'web') {
-      console.log('Location tracking not supported on web');
+    if (Platform.OS === 'web' || !Location) {
       return;
     }
 
     if (this.isTracking) {
-      console.log('Location tracking already active');
+      console.log('[Location] Already tracking');
       return;
     }
 
     try {
       this.driverId = driverId;
       this.isTracking = true;
+      console.log('[Location] Driver ID set:', driverId);
 
       // Get initial location
+      console.log('[Location] Getting initial position...');
       const initialLocation = await Location.getCurrentPositionAsync({
         accuracy: Location.Accuracy.High,
       });
+      console.log('[Location] Initial position:', initialLocation.coords.latitude, initialLocation.coords.longitude, 'accuracy:', initialLocation.coords.accuracy);
 
       await this.updateLocation(initialLocation);
 
-      // Start watching location with high accuracy
+      // Start watching location
       this.locationSubscription = await Location.watchPositionAsync(
         {
           accuracy: Location.Accuracy.High,
-          timeInterval: options.interval || 30000, // 30 seconds default
-          distanceInterval: options.distance || 50, // 50 meters default
+          timeInterval: options.interval || 15000, // 15 seconds
+          distanceInterval: options.distance || 30, // 30 meters
         },
         async (location) => {
           await this.updateLocation(location);
         }
       );
 
-      console.log('Location tracking started for driver:', driverId);
+      console.log('[Location] Tracking started for driver:', driverId);
     } catch (error) {
-      console.error('Error starting location tracking:', error);
+      console.error('[Location] Error starting tracking:', error);
       this.isTracking = false;
       throw error;
     }
   }
 
+  // Set the active trip ID for breadcrumb tracking
+  setActiveTripId(tripId) {
+    this.activeTripId = tripId;
+    console.log('[Location] Active trip set:', tripId || 'none');
+  }
+
   async updateLocation(location) {
-    if (!this.driverId) {
-      console.warn('No driver ID set for location update');
-      return;
-    }
+    if (!this.driverId) return;
 
     try {
       const { coords } = location;
+      const speedMph = coords.speed ? Math.max(0, coords.speed * 2.237) : 0;
 
-      const { data, error } = await supabase.rpc('upsert_driver_location', {
-        p_driver_id: this.driverId,
-        p_latitude: coords.latitude,
-        p_longitude: coords.longitude,
-        p_heading: coords.heading || 0,
-        p_speed: coords.speed ? coords.speed * 2.237 : 0, // Convert m/s to mph
-        p_accuracy: coords.accuracy || 0,
-        p_status: 'available',
-        p_battery_level: 100, // Would get from device battery API
+      // Send location to backend which uses service_role key (bypasses RLS)
+      console.log('[Location] Sending to backend:', coords.latitude.toFixed(6), coords.longitude.toFixed(6), 'accuracy:', (coords.accuracy || 0).toFixed(1), 'trip_id:', this.activeTripId || 'none');
+      const result = await driverAPI.updateLocation({
+        latitude: coords.latitude,
+        longitude: coords.longitude,
+        heading: coords.heading || 0,
+        speed: speedMph,
+        accuracy: coords.accuracy || 0,
+        status: this.activeTripId ? 'on_trip' : 'available',
+        trip_id: this.activeTripId || null,
       });
-
-      if (error) {
-        console.error('Error updating location:', error);
-        return;
-      }
-
-      console.log('Location updated:', {
-        lat: coords.latitude.toFixed(6),
-        lng: coords.longitude.toFixed(6),
-        speed: (coords.speed * 2.237).toFixed(1) + ' mph',
-      });
-
-      return data;
+      console.log('[Location] Backend response:', JSON.stringify(result));
     } catch (error) {
-      console.error('Error in updateLocation:', error);
+      console.error('[Location] updateLocation error:', error.message || error, error.code || '');
     }
   }
 
@@ -126,26 +129,23 @@ class LocationService {
       this.locationSubscription = null;
     }
 
-    // Mark driver as offline
+    // Mark driver as offline via backend (don't delete — keep last known location)
     if (this.driverId) {
       try {
-        await supabase
-          .from('driver_locations')
-          .update({ is_online: false })
-          .eq('driver_id', this.driverId);
+        await driverAPI.setOffline();
       } catch (error) {
-        console.error('Error marking driver offline:', error);
+        console.error('[Location] Error setting offline:', error.message || error);
       }
     }
 
     this.isTracking = false;
+    this.activeTripId = null;
     this.driverId = null;
-    console.log('Location tracking stopped');
+    console.log('[Location] Tracking stopped');
   }
 
   async getCurrentLocation() {
-    if (Platform.OS === 'web') {
-      console.log('Current location not available on web');
+    if (Platform.OS === 'web' || !Location) {
       return null;
     }
 
@@ -155,7 +155,7 @@ class LocationService {
       });
       return location;
     } catch (error) {
-      console.error('Error getting current location:', error);
+      console.error('[Location] Error getting current location:', error);
       throw error;
     }
   }

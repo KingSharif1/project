@@ -473,6 +473,17 @@ export async function deleteDriverDocument(driverId: string, docId: string) {
   });
 }
 
+export async function saveDriverSignature(driverId: string, signatureData: string, latitude?: number, longitude?: number) {
+  return apiRequest<{ success: boolean; data: any }>(`/drivers/${driverId}/signature`, {
+    method: 'POST',
+    body: JSON.stringify({ signatureData, latitude, longitude }),
+  });
+}
+
+export async function getDriverSignature(driverId: string) {
+  return apiRequest<{ success: boolean; data: { signature_data: string; signature_signed_at: string; signature_location_lat: number; signature_location_lng: number } }>(`/drivers/${driverId}/signature`);
+}
+
 // ============ NOTIFICATIONS API ============
 
 export async function sendSms(to: string, message: string, tripId?: string) {
@@ -543,8 +554,19 @@ export async function logTripReminder(data: { tripId: string; reminderType?: str
 
 // ============ TRIP HISTORY API ============
 
+export async function importTrips(data: { trips: any[]; contractorId?: string; clinicId?: string }) {
+  return apiRequest<{ success: boolean; message: string; created: number; errors: any[]; skipped: number }>('/trips/import', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
 export async function getTripHistory(tripId: string) {
   return apiRequest<{ success: boolean; data: any[] }>(`/trips/${tripId}/history`);
+}
+
+export async function getTripStatusHistory(tripId: string) {
+  return apiRequest<{ success: boolean; data: any[] }>(`/trips/${tripId}/status-history`);
 }
 
 export async function getTripCreator(tripId: string) {
@@ -596,6 +618,10 @@ export async function getTripSignatures(tripIds: string[]) {
     method: 'POST',
     body: JSON.stringify({ tripIds }),
   });
+}
+
+export async function getTripLocationHistory(tripId: string) {
+  return apiRequest<{ success: boolean; data: any[] }>(`/trips/${tripId}/location-history`);
 }
 
 // ============ USER NOTIFICATIONS API ============
@@ -911,6 +937,41 @@ export async function getDriverLocationById(driverId: string) {
 
 export async function getDocumentExpirySummary() {
   return apiRequest<{ success: boolean; data: any }>('/drivers/document-expiry-summary');
+}
+
+// ============ MESSAGES API ============
+
+export async function getConversations() {
+  return apiRequest<{ success: boolean; conversations: any[] }>('/messages/conversations');
+}
+
+export async function getContacts() {
+  return apiRequest<{ success: boolean; contacts: any[] }>('/messages/contacts');
+}
+
+export async function getMessages(otherUserId: string, limit?: number, before?: string) {
+  const params = new URLSearchParams();
+  if (limit) params.append('limit', limit.toString());
+  if (before) params.append('before', before);
+  const query = params.toString() ? `?${params.toString()}` : '';
+  return apiRequest<{ success: boolean; messages: any[] }>(`/messages/${otherUserId}${query}`);
+}
+
+export async function sendMessage(receiverId: string, content: string) {
+  return apiRequest<{ success: boolean; message: any }>('/messages', {
+    method: 'POST',
+    body: JSON.stringify({ receiverId, content }),
+  });
+}
+
+export async function markMessageRead(messageId: string) {
+  return apiRequest<{ success: boolean }>(`/messages/${messageId}/read`, {
+    method: 'PUT',
+  });
+}
+
+export async function getUnreadMessageCount() {
+  return apiRequest<{ success: boolean; unreadCount: number }>('/messages/unread-count');
 }
 
 // ============ DATA LOADING API ============

@@ -186,8 +186,6 @@ export const UpcomingReminders: React.FC<UpcomingRemindersProps> = ({ hoursAhead
 
       try {
         const patient = getPatient(trip.patientId);
-        const driver = getDriver(trip.driverId);
-
         const phoneNumber = trip.customerPhone || patient?.phone;
 
         if (!phoneNumber) {
@@ -200,7 +198,6 @@ export const UpcomingReminders: React.FC<UpcomingRemindersProps> = ({ hoursAhead
 
         const fullDate = formatFullDate(trip.scheduledTime);
         const time = formatTime(trip.scheduledTime);
-        const passengerName = trip.customerName || patient?.name || 'Passenger';
         const contractor = getContractor(trip.contractorId);
         const contractorName = contractor?.name || 'your healthcare facility';
 
@@ -449,7 +446,7 @@ export const UpcomingReminders: React.FC<UpcomingRemindersProps> = ({ hoursAhead
                     const patient = getPatient(trip.patientId);
                     const isSelected = selectedTrips.has(trip.id);
                     const status = sentStatus.get(trip.id);
-                    const passengerName = trip.customerName || patient?.name || 'Unknown Passenger';
+                    const passengerName = trip.customerName || (patient ? `${patient.firstName} ${patient.lastName}`.trim() : '') || 'Unknown Passenger';
                     const phoneNumber = trip.customerPhone || patient?.phone;
 
                     return (
@@ -589,7 +586,7 @@ export const UpcomingReminders: React.FC<UpcomingRemindersProps> = ({ hoursAhead
                   {smsHistory.map((sms) => {
                     const trip = getTripById(sms.trip_id);
                     const patient = getPatient(trip?.patientId);
-                    const passengerName = trip?.customerName || patient?.name || 'Unknown';
+                    const passengerName = trip?.customerName || (patient ? `${patient.firstName} ${patient.lastName}`.trim() : '') || 'Unknown';
 
                     return (
                       <tr key={sms.id} className="hover:bg-gray-50">

@@ -299,9 +299,9 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
       // Refresh data from database to ensure we have the latest state
       await loadInitialData();
 
-    } catch (error) {
-      console.error('Error updating trip:', error);
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    } catch (error: any) {
+      console.error('Error updating trip:', error?.message || error?.error || JSON.stringify(error));
+      const errorMessage = error instanceof Error ? error.message : (error?.message || error?.error || 'Unknown error');
       alert(`Failed to update trip: ${errorMessage}`);
     }
   };

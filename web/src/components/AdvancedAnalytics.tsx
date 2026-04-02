@@ -2,18 +2,19 @@ import React, { useMemo } from 'react';
 import {
   TrendingUp,
   DollarSign,
-  Clock,
   Users,
   AlertCircle,
   AlertTriangle,
   Award,
   CheckCircle2,
-  Percent
+  Car,
+  BarChart3
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
+import { calculateContractorRate } from '../utils/rateCalculator';
 
 export const AdvancedAnalytics: React.FC = () => {
-  const { trips, drivers, patients } = useApp();
+  const { trips, drivers, patients, clinics, contractors } = useApp();
   const [startDate, setStartDate] = React.useState(() => {
     const d = new Date();
     d.setDate(d.getDate() - 30);
@@ -24,7 +25,6 @@ export const AdvancedAnalytics: React.FC = () => {
   const analytics = useMemo(() => {
     const start = new Date(startDate);
     const end = new Date(endDate);
-    // Set end date to end of day
     end.setHours(23, 59, 59, 999);
 
     const currentTrips = trips.filter(t => {
@@ -32,14 +32,29 @@ export const AdvancedAnalytics: React.FC = () => {
       return d >= start && d <= end;
     });
 
-    const totalRevenue = currentTrips.reduce((sum, t) => sum + (t.fare || 0), 0);
-    const totalPayout = currentTrips.reduce((sum, t) => sum + (t.driverPayout || 0), 0);
-    const totalProfit = totalRevenue - totalPayout;
-    const profitMargin = totalRevenue > 0 ? (totalProfit / totalRevenue) * 100 : 0;
+    // Helper: get fare for a trip, dynamically calculating from contractor rate if fare is 0
+    const getTripFare = (trip: any): number => {
+      if (trip.fare && trip.fare > 0) return trip.fare;
+      const rateSource = (trip.contractorId ? contractors.find((c: any) => c.id === trip.contractorId) : null)
+        || (trip.clinicId ? clinics.find((c: any) => c.id === trip.clinicId) : null);
+      if (rateSource && (trip.distance || trip.distanceMiles)) {
+        const calc = calculateContractorRate(
+          (trip.serviceLevel || 'ambulatory') as any,
+          trip.distance || trip.distanceMiles || 0,
+          rateSource as any
+        );
+        return calc.rate;
+      }
+      return 0;
+    };
 
     const completedTrips = currentTrips.filter(t => t.status === 'completed');
     const cancelledTrips = currentTrips.filter(t => t.status === 'cancelled');
     const noShowTrips = currentTrips.filter(t => t.status === 'no-show');
+
+    const totalRevenue = completedTrips.reduce((sum, t) => sum + getTripFare(t), 0);
+    const avgRevenuePerTrip = completedTrips.length > 0 ? totalRevenue / completedTrips.length : 0;
+    const totalMiles = completedTrips.reduce((sum, t) => sum + (t.distance || t.mileage || 0), 0);
 
     const completionRate = currentTrips.length > 0
       ? (completedTrips.length / currentTrips.length) * 100
@@ -53,35 +68,33 @@ export const AdvancedAnalytics: React.FC = () => {
       ? (noShowTrips.length / currentTrips.length) * 100
       : 0;
 
-    const activeDrivers = drivers.filter(d => d.status !== 'offline');
-    const driverUtilization = activeDrivers.length > 0
-      ? (completedTrips.length / (activeDrivers.length * 30)) * 100 // Approximation
-      : 0;
-
     const topDrivers = drivers
       .map(driver => {
         const driverTrips = completedTrips.filter(t => t.driverId === driver.id);
-        const revenue = driverTrips.reduce((sum, t) => sum + (t.fare || 0), 0);
+        const revenue = driverTrips.reduce((sum, t) => sum + getTripFare(t), 0);
         return {
           ...driver,
           tripCount: driverTrips.length,
           revenue,
         };
       })
+      .filter(d => d.tripCount > 0)
       .sort((a, b) => b.revenue - a.revenue)
       .slice(0, 5);
 
-    const peakHours = Array.from({ length: 24 }, (_, hour) => {
-      const hourTrips = currentTrips.filter(t => {
-        const tripHour = new Date(t.scheduledTime).getHours();
-        return tripHour === hour;
-      });
+    // Revenue by service level
+    const serviceLevels = ['ambulatory', 'wheelchair', 'stretcher'];
+    const revenueByService = serviceLevels.map(level => {
+      const levelTrips = completedTrips.filter(t => (t.serviceLevel || 'ambulatory') === level);
+      const revenue = levelTrips.reduce((sum, t) => sum + getTripFare(t), 0);
+      const miles = levelTrips.reduce((sum, t) => sum + (t.distance || t.mileage || 0), 0);
       return {
-        hour,
-        count: hourTrips.length,
-        revenue: hourTrips.reduce((sum, t) => sum + (t.fare || 0), 0),
+        level: level.charAt(0).toUpperCase() + level.slice(1),
+        count: levelTrips.length,
+        revenue,
+        miles,
       };
-    }).sort((a, b) => b.count - a.count).slice(0, 3);
+    });
 
     const patientFrequency = patients
       .map(patient => {
@@ -91,26 +104,26 @@ export const AdvancedAnalytics: React.FC = () => {
           tripCount: patientTrips.length,
         };
       })
+      .filter(p => p.tripCount > 0)
       .sort((a, b) => b.tripCount - a.tripCount)
       .slice(0, 5);
 
     return {
       totalRevenue,
-      totalPayout,
-      totalProfit,
-      profitMargin,
+      avgRevenuePerTrip,
+      totalMiles,
       totalTrips: currentTrips.length,
       completedTrips: completedTrips.length,
+      cancelledCount: cancelledTrips.length,
+      noShowCount: noShowTrips.length,
       completionRate,
       cancellationRate,
       noShowRate,
-      driverUtilization,
       topDrivers,
-      peakHours,
+      revenueByService,
       patientFrequency,
-      revenueGrowth: 0, // Placeholder for revenue growth
     };
-  }, [trips, drivers, patients, startDate, endDate]);
+  }, [trips, drivers, patients, clinics, contractors, startDate, endDate]);
 
   const MetricCard: React.FC<{
     title: string;
@@ -136,7 +149,7 @@ export const AdvancedAnalytics: React.FC = () => {
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h1 className="text-3xl font-bold text-gray-900 mb-2">Advanced Analytics</h1>
-          <p className="text-gray-600">Profitability and performance metrics</p>
+          <p className="text-gray-600">Revenue and performance metrics</p>
         </div>
         <div className="flex items-center gap-2 bg-white p-2 rounded-lg border border-gray-200 shadow-sm">
           <input
@@ -145,7 +158,7 @@ export const AdvancedAnalytics: React.FC = () => {
             onChange={(e) => setStartDate(e.target.value)}
             className="border-none focus:ring-0 text-sm text-gray-600"
           />
-          <span className="text-gray-400">-</span>
+          <span className="text-gray-400">to</span>
           <input
             type="date"
             value={endDate}
@@ -159,31 +172,33 @@ export const AdvancedAnalytics: React.FC = () => {
         <MetricCard
           title="Total Revenue"
           value={`$${analytics.totalRevenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+          subValue={`From ${analytics.completedTrips} completed trips`}
           icon={DollarSign}
           iconColor="bg-green-100 text-green-600"
         />
 
         <MetricCard
-          title="Total Payout"
-          value={`$${analytics.totalPayout.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
-          icon={DollarSign}
-          iconColor="bg-red-100 text-red-600"
-        />
-
-        <MetricCard
-          title="Net Profit"
-          value={`$${analytics.totalProfit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
-          subValue={`Margin: ${analytics.profitMargin.toFixed(1)}%`}
-          icon={TrendingUp}
+          title="Total Trips"
+          value={analytics.totalTrips}
+          subValue={`${analytics.completedTrips} completed, ${analytics.cancelledCount} cancelled, ${analytics.noShowCount} no-show`}
+          icon={Car}
           iconColor="bg-blue-100 text-blue-600"
         />
 
         <MetricCard
-          title="Completed Trips"
-          value={analytics.completedTrips}
-          subValue={`${analytics.completionRate.toFixed(1)}% Completion`}
-          icon={CheckCircle2}
+          title="Avg Revenue / Trip"
+          value={`$${analytics.avgRevenuePerTrip.toFixed(2)}`}
+          subValue={`${analytics.totalMiles.toFixed(1)} total miles`}
+          icon={TrendingUp}
           iconColor="bg-purple-100 text-purple-600"
+        />
+
+        <MetricCard
+          title="Completion Rate"
+          value={`${analytics.completionRate.toFixed(1)}%`}
+          subValue={`${analytics.cancellationRate.toFixed(1)}% cancelled · ${analytics.noShowRate.toFixed(1)}% no-show`}
+          icon={CheckCircle2}
+          iconColor="bg-emerald-100 text-emerald-600"
         />
       </div>
 
@@ -201,7 +216,7 @@ export const AdvancedAnalytics: React.FC = () => {
           <div className="w-full bg-gray-200 rounded-full h-3">
             <div
               className="bg-green-600 h-3 rounded-full transition-all"
-              style={{ width: `${analytics.completionRate}%` }}
+              style={{ width: `${Math.min(analytics.completionRate, 100)}%` }}
             />
           </div>
         </div>
@@ -219,7 +234,7 @@ export const AdvancedAnalytics: React.FC = () => {
           <div className="w-full bg-gray-200 rounded-full h-3">
             <div
               className="bg-red-600 h-3 rounded-full transition-all"
-              style={{ width: `${analytics.cancellationRate}%` }}
+              style={{ width: `${Math.min(analytics.cancellationRate, 100)}%` }}
             />
           </div>
         </div>
@@ -237,7 +252,7 @@ export const AdvancedAnalytics: React.FC = () => {
           <div className="w-full bg-gray-200 rounded-full h-3">
             <div
               className="bg-orange-600 h-3 rounded-full transition-all"
-              style={{ width: `${analytics.noShowRate}%` }}
+              style={{ width: `${Math.min(analytics.noShowRate, 100)}%` }}
             />
           </div>
         </div>
@@ -249,51 +264,65 @@ export const AdvancedAnalytics: React.FC = () => {
             <Award className="w-6 h-6 text-yellow-600" />
             <h2 className="text-xl font-bold text-gray-900">Top Performing Drivers</h2>
           </div>
-          <div className="space-y-3">
-            {analytics.topDrivers.map((driver, index) => (
-              <div key={driver.id} className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
-                <div className="flex items-center space-x-3">
-                  <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-white ${
-                    index === 0 ? 'bg-yellow-500' :
-                    index === 1 ? 'bg-gray-400' :
-                    index === 2 ? 'bg-orange-400' : 'bg-blue-500'
-                  }`}>
-                    {index + 1}
+          {analytics.topDrivers.length === 0 ? (
+            <p className="text-gray-500 text-center py-8">No completed trips in this period</p>
+          ) : (
+            <div className="space-y-3">
+              {analytics.topDrivers.map((driver, index) => (
+                <div key={driver.id} className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
+                  <div className="flex items-center space-x-3">
+                    <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-white ${
+                      index === 0 ? 'bg-yellow-500' :
+                      index === 1 ? 'bg-gray-400' :
+                      index === 2 ? 'bg-orange-400' : 'bg-blue-500'
+                    }`}>
+                      {index + 1}
+                    </div>
+                    <div>
+                      <p className="font-semibold text-gray-900">{driver.name}</p>
+                      <p className="text-sm text-gray-600">{driver.tripCount} trips completed</p>
+                    </div>
                   </div>
-                  <div>
-                    <p className="font-semibold text-gray-900">{driver.name}</p>
-                    <p className="text-sm text-gray-600">{driver.tripCount} trips completed</p>
+                  <div className="text-right">
+                    <p className="font-bold text-gray-900">${driver.revenue.toFixed(2)}</p>
+                    <p className="text-sm text-gray-600">Revenue</p>
                   </div>
                 </div>
-                <div className="text-right">
-                  <p className="font-bold text-gray-900">${driver.revenue.toLocaleString()}</p>
-                  <p className="text-sm text-gray-600">Revenue</p>
-                </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
         </div>
 
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
           <div className="flex items-center space-x-3 mb-6">
-            <Clock className="w-6 h-6 text-blue-600" />
-            <h2 className="text-xl font-bold text-gray-900">Peak Service Hours</h2>
+            <BarChart3 className="w-6 h-6 text-blue-600" />
+            <h2 className="text-xl font-bold text-gray-900">Revenue by Service Level</h2>
           </div>
-          <div className="space-y-3">
-            {analytics.peakHours.map((hour) => (
-              <div key={hour.hour} className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
-                <div>
-                  <p className="font-semibold text-gray-900">
-                    {hour.hour === 0 ? '12 AM' : hour.hour < 12 ? `${hour.hour} AM` : hour.hour === 12 ? '12 PM' : `${hour.hour - 12} PM`}
-                  </p>
-                  <p className="text-sm text-gray-600">{hour.count} trips</p>
+          <div className="space-y-4">
+            {analytics.revenueByService.map((service) => {
+              const maxRevenue = Math.max(...analytics.revenueByService.map(s => s.revenue), 1);
+              const barWidth = (service.revenue / maxRevenue) * 100;
+              return (
+                <div key={service.level} className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="font-semibold text-gray-900">{service.level}</p>
+                      <p className="text-sm text-gray-600">{service.count} trips · {service.miles.toFixed(1)} mi</p>
+                    </div>
+                    <p className="font-bold text-gray-900">${service.revenue.toFixed(2)}</p>
+                  </div>
+                  <div className="w-full bg-gray-200 rounded-full h-2.5">
+                    <div
+                      className={`h-2.5 rounded-full transition-all ${
+                        service.level === 'Ambulatory' ? 'bg-blue-500' :
+                        service.level === 'Wheelchair' ? 'bg-purple-500' : 'bg-red-500'
+                      }`}
+                      style={{ width: `${barWidth}%` }}
+                    />
+                  </div>
                 </div>
-                <div className="text-right">
-                  <p className="font-bold text-gray-900">${hour.revenue.toLocaleString()}</p>
-                  <p className="text-sm text-gray-600">Revenue</p>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       </div>
@@ -301,62 +330,36 @@ export const AdvancedAnalytics: React.FC = () => {
       <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
         <div className="flex items-center space-x-3 mb-6">
           <Users className="w-6 h-6 text-purple-600" />
-          <h2 className="text-xl font-bold text-gray-900">Most Frequent Patients</h2>
+          <h2 className="text-xl font-bold text-gray-900">Most Frequent Riders</h2>
         </div>
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead>
-              <tr className="border-b border-gray-200">
-                <th className="text-left py-3 px-4 font-semibold text-gray-700">Patient</th>
-                <th className="text-center py-3 px-4 font-semibold text-gray-700">Total Trips</th>
-                <th className="text-center py-3 px-4 font-semibold text-gray-700">Phone</th>
-                <th className="text-right py-3 px-4 font-semibold text-gray-700">Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {analytics.patientFrequency.map((patient, index) => (
-                <tr key={patient.id} className={index % 2 === 0 ? 'bg-gray-50' : 'bg-white'}>
-                  <td className="py-3 px-4 text-gray-900 font-medium">{patient.firstName} {patient.lastName}</td>
-                  <td className="py-3 px-4 text-center">
-                    <span className="bg-blue-100 text-blue-800 px-3 py-1 rounded-full text-sm font-semibold">
-                      {patient.tripCount}
-                    </span>
-                  </td>
-                  <td className="py-3 px-4 text-center text-gray-600">{patient.phone}</td>
-                  <td className="py-3 px-4 text-right">
-                    <span className="bg-green-100 text-green-800 px-3 py-1 rounded-full text-sm font-semibold">
-                      Active
-                    </span>
-                  </td>
+        {analytics.patientFrequency.length === 0 ? (
+          <p className="text-gray-500 text-center py-8">No trips in this period</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead>
+                <tr className="border-b border-gray-200">
+                  <th className="text-left py-3 px-4 font-semibold text-gray-700">Rider</th>
+                  <th className="text-center py-3 px-4 font-semibold text-gray-700">Total Trips</th>
+                  <th className="text-center py-3 px-4 font-semibold text-gray-700">Phone</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      <div className="bg-gradient-to-r from-blue-50 to-purple-50 rounded-xl p-6 border border-blue-200">
-        <h3 className="font-bold text-gray-900 mb-4">Key Insights</h3>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="flex items-start space-x-3">
-            <TrendingUp className="w-5 h-5 text-green-600 mt-1" />
-            <div>
-              <p className="font-semibold text-gray-900">Revenue Trend</p>
-              <p className="text-sm text-gray-600">
-                {analytics.revenueGrowth > 0 ? 'Increase' : 'Decrease'} of {Math.abs(analytics.revenueGrowth).toFixed(1)}% vs previous period
-              </p>
-            </div>
+              </thead>
+              <tbody>
+                {analytics.patientFrequency.map((patient, index) => (
+                  <tr key={patient.id} className={index % 2 === 0 ? 'bg-gray-50' : 'bg-white'}>
+                    <td className="py-3 px-4 text-gray-900 font-medium">{patient.firstName} {patient.lastName}</td>
+                    <td className="py-3 px-4 text-center">
+                      <span className="bg-blue-100 text-blue-800 px-3 py-1 rounded-full text-sm font-semibold">
+                        {patient.tripCount}
+                      </span>
+                    </td>
+                    <td className="py-3 px-4 text-center text-gray-600">{patient.phone}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
-          <div className="flex items-start space-x-3">
-            <Percent className="w-5 h-5 text-blue-600 mt-1" />
-            <div>
-              <p className="font-semibold text-gray-900">Driver Utilization</p>
-              <p className="text-sm text-gray-600">
-                {analytics.driverUtilization.toFixed(1)}% average utilization rate
-              </p>
-            </div>
-          </div>
-        </div>
+        )}
       </div>
     </div>
   );

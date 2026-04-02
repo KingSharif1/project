@@ -26,7 +26,7 @@ interface RiderOption {
     lastName: string;
     fullName: string;
     phone: string;
-    accountNumber?: string;
+    memberId?: string;
     serviceLevel?: string;
     notes?: string;
 }
@@ -56,7 +56,7 @@ export const RiderAutocomplete: React.FC<RiderAutocompleteProps> = ({ trips, onS
                         lastName: p.last_name || '',
                         fullName: `${p.first_name || ''} ${p.last_name || ''}`.trim(),
                         phone: p.phone || '',
-                        accountNumber: p.account_number || '',
+                        memberId: p.member_id || '',
                         serviceLevel: p.service_level || 'ambulatory',
                         notes: p.notes || '',
                     }));
@@ -153,8 +153,8 @@ export const RiderAutocomplete: React.FC<RiderAutocompleteProps> = ({ trips, onS
                                                 <Phone className="w-3 h-3 mr-1" />
                                                 {rider.phone}
                                             </span>
-                                            {rider.accountNumber && (
-                                                <span className="text-gray-400">Acct: {rider.accountNumber}</span>
+                                            {rider.memberId && (
+                                                <span className="text-gray-400">Member: {rider.memberId}</span>
                                             )}
                                         </div>
                                     </div>

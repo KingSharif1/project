@@ -1,0 +1,7 @@
+Data Retention and Disposal Policy
+
+Retention: Financial data is retained only as long as the personal dashboard is active.
+
+Review: The developer reviews stored data quarterly to ensure no unnecessary sensitive information is kept.
+
+Disposal: Upon project termination, all local database records will be wiped. Access tokens will be revoked via the Plaid Dashboard to permanently sever the connection to financial institutions.

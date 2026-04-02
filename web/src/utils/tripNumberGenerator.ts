@@ -8,8 +8,9 @@
 export const generateTripNumber = (
   isReturnTrip: boolean = false,
   existingNumber?: string,
-  existingTripNumbers: string[] = []
+  existingTripNumbers?: string[]
 ): string => {
+  const tripNumbers = existingTripNumbers || [];
   if (existingNumber) {
     // If we have an existing number, just change/add the suffix
     const baseNumber = existingNumber.replace(/[AB]$/, '');
@@ -27,7 +28,7 @@ export const generateTripNumber = (
     const tripNumber = `${baseNumber}${isReturnTrip ? 'B' : 'A'}`;
 
     // Check if this number already exists
-    if (!existingTripNumbers.includes(tripNumber)) {
+    if (!tripNumbers.includes(tripNumber)) {
       return tripNumber;
     }
 

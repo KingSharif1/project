@@ -3,6 +3,7 @@ import { MapPin, Navigation, Car, Clock, User, Phone, RefreshCw, Map as MapIcon,
 import { useApp } from '../context/AppContext';
 import { Trip, Driver } from '../types';
 import * as api from '../services/api';
+import { supabase } from '../lib/supabase';
 import { loadGoogleMaps } from '../utils/googleMapsLoader';
 import { TripHistoryViewer } from './TripHistoryViewer';
 
@@ -12,7 +13,9 @@ interface DriverLocation {
   longitude: number;
   heading?: number;
   speed?: number;
-  last_updated: string;
+  status?: string;
+  is_online?: boolean;
+  last_update: string;
 }
 
 type ViewMode = 'active' | 'history';
@@ -30,16 +33,35 @@ export const RealtimeTracking: React.FC = () => {
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<google.maps.Map | null>(null);
   const markersRef = useRef<Map<string, google.maps.Marker>>(new Map());
+  const hasInitiallyFittedRef = useRef<boolean>(false);
 
-  const activeTrips = trips.filter(trip =>
-    trip.status === 'assigned' || trip.status === 'in_progress'
-  );
+  const today = new Date().toISOString().split('T')[0];
+
+  // Active statuses (frontend mapped values)
+  const ACTIVE_STATUSES = ['assigned', 'in_progress'];
+
+  const activeTrips = trips.filter(trip => {
+    if (!ACTIVE_STATUSES.includes(trip.status)) return false;
+    // Must have a driver assigned
+    if (!trip.driverId) return false;
+    // Only show today's trips
+    const tripDate = trip.scheduledTime
+      ? new Date(trip.scheduledTime).toISOString().split('T')[0]
+      : trip.scheduledPickupTime
+        ? new Date(trip.scheduledPickupTime).toISOString().split('T')[0]
+        : null;
+    return tripDate === today;
+  });
+
+  // Online drivers = all drivers that have a realtime location entry
+  const onlineDrivers = drivers.filter(d => driverLocations.has(d.id));
 
   const completedTrips = trips.filter(trip => {
     if (trip.status !== 'completed') return false;
 
     // Date filter
     if (!dateFilter) return true;
+    if (!trip.scheduledPickupTime) return false;
     const tripDate = new Date(trip.scheduledPickupTime).toISOString().split('T')[0];
     if (tripDate !== dateFilter) return false;
 
@@ -47,9 +69,11 @@ export const RealtimeTracking: React.FC = () => {
     if (driverFilter !== 'all' && trip.driverId !== driverFilter) return false;
 
     return true;
-  }).sort((a, b) =>
-    new Date(b.scheduledPickupTime).getTime() - new Date(a.scheduledPickupTime).getTime()
-  );
+  }).sort((a, b) => {
+    const dateA = a.scheduledPickupTime ? new Date(a.scheduledPickupTime).getTime() : 0;
+    const dateB = b.scheduledPickupTime ? new Date(b.scheduledPickupTime).getTime() : 0;
+    return dateB - dateA;
+  });
 
   // Get unique drivers who have completed trips
   const driversWithCompletedTrips = Array.from(
@@ -63,13 +87,52 @@ export const RealtimeTracking: React.FC = () => {
     .sort((a, b) => a.name.localeCompare(b.name));
 
   useEffect(() => {
+    // Initial load
     loadDriverLocations();
-    const interval = setInterval(() => {
-      loadDriverLocations();
-    }, 10000);
 
-    return () => clearInterval(interval);
+    // Realtime subscription — instant updates when driver_locations changes
+    const channel = supabase
+      .channel('driver-locations-realtime')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'driver_locations' },
+        (payload: any) => {
+          const loc = payload.new as DriverLocation;
+          if (!loc?.driver_id) return;
+
+          setDriverLocations(prev => {
+            const updated = new Map(prev);
+            if (payload.eventType === 'DELETE' || loc.is_online === false) {
+              updated.delete(loc.driver_id);
+            } else {
+              updated.set(loc.driver_id, loc);
+            }
+            return updated;
+          });
+          setLastUpdated(new Date());
+        }
+      )
+      .subscribe((status: string) => {
+        console.log('[RealtimeTracking] Subscription:', status);
+      });
+
+    // Fallback poll every 5s for true real-time updates
+    const fallbackInterval = setInterval(() => {
+      loadDriverLocations();
+    }, 5000);
+
+    return () => {
+      supabase.removeChannel(channel);
+      clearInterval(fallbackInterval);
+    };
   }, []);
+
+  // Update map markers whenever driverLocations changes (from realtime or polling)
+  useEffect(() => {
+    if (showMap && mapInstanceRef.current) {
+      updateMapMarkers(driverLocations);
+    }
+  }, [driverLocations, showMap]);
 
   const loadDriverLocations = async () => {
     try {
@@ -116,12 +179,37 @@ export const RealtimeTracking: React.FC = () => {
     const diffMinutes = Math.floor((now - updated) / 60000);
 
     if (diffMinutes < 1) return 'Just now';
-    if (diffMinutes === 1) return '1 minute ago';
-    if (diffMinutes < 60) return `${diffMinutes} minutes ago`;
+    if (diffMinutes === 1) return '1 min ago';
+    if (diffMinutes < 60) return `${diffMinutes} min ago`;
 
     const diffHours = Math.floor(diffMinutes / 60);
-    if (diffHours === 1) return '1 hour ago';
-    return `${diffHours} hours ago`;
+    if (diffHours < 24) return `${diffHours}h ago`;
+
+    const diffDays = Math.floor(diffHours / 24);
+    if (diffDays === 1) return '1 day ago';
+    if (diffDays < 30) return `${diffDays} days ago`;
+
+    return 'Over a month ago';
+  };
+
+  const focusOnDriver = (driverId: string) => {
+    const location = driverLocations.get(driverId);
+    if (!location || !mapInstanceRef.current) return;
+
+    const position = { lat: location.latitude, lng: location.longitude };
+    
+    // Pan to driver location and zoom in
+    mapInstanceRef.current.panTo(position);
+    mapInstanceRef.current.setZoom(15); // Zoom in to street level
+
+    // Find and animate the marker
+    const marker = markersRef.current.get(driverId);
+    if (marker) {
+      marker.setAnimation(google.maps.Animation.BOUNCE);
+      setTimeout(() => {
+        marker.setAnimation(null);
+      }, 2000);
+    }
   };
 
   const initializeMap = async () => {
@@ -130,16 +218,16 @@ export const RealtimeTracking: React.FC = () => {
     try {
       await loadGoogleMaps();
 
-      const center = activeTrips.length > 0
-        ? await geocodeAddress(activeTrips[0].pickupAddress)
-        : { lat: 40.7128, lng: -74.0060 };
+      // Default to city-level view (adjust coordinates for your NEMT operation city)
+      const center = { lat: 32.7555, lng: -97.3308 }; // Dallas-Fort Worth area
 
       const map = new google.maps.Map(mapRef.current, {
-        center: center || { lat: 40.7128, lng: -74.0060 },
-        zoom: 12,
+        center: center,
+        zoom: 11, // City-level zoom (11-12 is good for city overview)
         mapTypeControl: true,
         streetViewControl: false,
         fullscreenControl: true,
+        zoomControl: true,
       });
 
       mapInstanceRef.current = map;
@@ -160,11 +248,16 @@ export const RealtimeTracking: React.FC = () => {
     const bounds = new google.maps.LatLngBounds();
     let hasLocations = false;
 
+    // Track which drivers already have markers (from active trips)
+    const driversWithMarkers = new Set<string>();
+
+    // 1. Show drivers on active trips (blue arrows)
     for (const trip of activeTrips) {
       const driver = getDriverForTrip(trip);
       const location = trip.driverId ? locations.get(trip.driverId) : undefined;
 
       if (location && driver) {
+        driversWithMarkers.add(driver.id);
         const position = { lat: location.latitude, lng: location.longitude };
 
         const marker = new google.maps.Marker({
@@ -187,9 +280,9 @@ export const RealtimeTracking: React.FC = () => {
             <div style="padding: 8px;">
               <strong>${driver.name}</strong><br/>
               Trip: ${trip.tripNumber}<br/>
-              Status: ${trip.status}<br/>
+              Status: ${trip.status.replace(/_/g, ' ')}<br/>
               ${location.speed ? `Speed: ${Math.round(location.speed)} mph<br/>` : ''}
-              Updated: ${getTimeSince(location.last_updated)}
+              Updated: ${getTimeSince(location.last_update)}
             </div>
           `,
         });
@@ -205,8 +298,52 @@ export const RealtimeTracking: React.FC = () => {
       }
     }
 
-    if (hasLocations) {
+    // 2. Show idle online drivers (green circles) — drivers with location but no active trip
+    for (const [driverId, location] of locations) {
+      if (driversWithMarkers.has(driverId)) continue;
+      const driver = drivers.find(d => d.id === driverId);
+      if (!driver) continue;
+
+      const position = { lat: location.latitude, lng: location.longitude };
+
+      const marker = new google.maps.Marker({
+        position,
+        map: mapInstanceRef.current,
+        icon: {
+          path: google.maps.SymbolPath.CIRCLE,
+          scale: 8,
+          fillColor: '#10b981',
+          fillOpacity: 1,
+          strokeColor: '#fff',
+          strokeWeight: 2,
+        },
+        title: `${driver.name} (Available)`,
+      });
+
+      const infoWindow = new google.maps.InfoWindow({
+        content: `
+          <div style="padding: 8px;">
+            <strong>${driver.name}</strong><br/>
+            Status: Available<br/>
+            ${location.speed ? `Speed: ${Math.round(location.speed)} mph<br/>` : ''}
+            Updated: ${getTimeSince(location.last_update)}
+          </div>
+        `,
+      });
+
+      marker.addListener('click', () => {
+        infoWindow.open(mapInstanceRef.current, marker);
+      });
+
+      markersRef.current.set(`driver-${driverId}`, marker);
+      bounds.extend(position);
+      hasLocations = true;
+    }
+
+    // Only fit bounds on first load, not on every update (prevents constant re-zooming)
+    if (hasLocations && !hasInitiallyFittedRef.current) {
       mapInstanceRef.current.fitBounds(bounds);
+      hasInitiallyFittedRef.current = true;
     }
   };
 
@@ -307,27 +444,76 @@ export const RealtimeTracking: React.FC = () => {
               <div className="mt-4 flex items-center gap-6 text-sm text-gray-600">
                 <div className="flex items-center gap-2">
                   <div className="w-4 h-4 bg-blue-500 transform rotate-45"></div>
-                  <span>Active Driver</span>
+                  <span>On Trip</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-4 h-4 bg-green-500 rounded-full"></div>
+                  <span>Available</span>
                 </div>
                 <div className="flex items-center gap-2">
                   <RefreshCw size={16} />
-                  <span>Updates every 10 seconds</span>
+                  <span>Live updates</span>
                 </div>
               </div>
             </div>
           )}
 
+          {/* Online Drivers Panel */}
           <div className="bg-white rounded-lg shadow-lg overflow-hidden">
             <div className="px-6 py-4 border-b border-gray-200">
               <h3 className="text-lg font-semibold text-gray-900">
-                Active Trips ({activeTrips.length})
+                Online Drivers ({onlineDrivers.length})
+              </h3>
+            </div>
+            {onlineDrivers.length === 0 ? (
+              <div className="p-6 text-center text-gray-500">
+                <User className="mx-auto h-8 w-8 text-gray-400 mb-2" />
+                <p>No drivers currently online</p>
+                <p className="text-xs text-gray-400 mt-1">Drivers appear here when they check in on the mobile app</p>
+              </div>
+            ) : (
+              <div className="p-4 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+                {onlineDrivers.map(driver => {
+                  const loc = driverLocations.get(driver.id);
+                  const hasActiveTrip = activeTrips.some(t => t.driverId === driver.id);
+                  const isStale = loc ? (Date.now() - new Date(loc.last_update).getTime()) > 5 * 60 * 1000 : false;
+                  const isVeryStale = loc ? (Date.now() - new Date(loc.last_update).getTime()) > 60 * 60 * 1000 : false;
+                  return (
+                    <div 
+                      key={driver.id} 
+                      onClick={() => focusOnDriver(driver.id)}
+                      className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-all hover:shadow-md ${isVeryStale ? 'border-gray-200 bg-gray-50 opacity-60 hover:opacity-80' : hasActiveTrip ? 'border-blue-200 bg-blue-50 hover:bg-blue-100' : 'border-green-200 bg-green-50 hover:bg-green-100'}`}
+                      title="Click to view on map"
+                    >
+                      <div className={`w-3 h-3 rounded-full ${isVeryStale ? 'bg-gray-400' : hasActiveTrip ? 'bg-blue-500' : 'bg-green-500'} ${isStale ? '' : 'animate-pulse'}`} />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-gray-900 truncate">{driver.name}</p>
+                        <p className="text-xs text-gray-500">
+                          {isVeryStale ? 'Last seen' : hasActiveTrip ? 'On Trip' : 'Available'}
+                          {loc?.speed && !isStale ? ` · ${Math.round(loc.speed)} mph` : ''}
+                        </p>
+                      </div>
+                      {loc && (
+                        <span className={`text-xs ${isVeryStale ? 'text-red-400' : isStale ? 'text-amber-500' : 'text-gray-400'}`}>{getTimeSince(loc.last_update)}</span>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          <div className="bg-white rounded-lg shadow-lg overflow-hidden">
+            <div className="px-6 py-4 border-b border-gray-200">
+              <h3 className="text-lg font-semibold text-gray-900">
+                Active Trips Today ({activeTrips.length})
               </h3>
             </div>
 
         {activeTrips.length === 0 ? (
           <div className="p-12 text-center">
             <Car className="mx-auto h-12 w-12 text-gray-400 mb-4" />
-            <p className="text-gray-500">No active trips at the moment</p>
+            <p className="text-gray-500">No active trips today</p>
           </div>
         ) : (
           <div className="divide-y divide-gray-200">
@@ -352,9 +538,11 @@ export const RealtimeTracking: React.FC = () => {
                         <span className={`px-3 py-1 rounded-full text-sm font-medium ${
                           trip.status === 'assigned'
                             ? 'bg-blue-100 text-blue-800'
-                            : 'bg-green-100 text-green-800'
+                            : trip.status === 'in_progress'
+                              ? 'bg-yellow-100 text-yellow-800'
+                              : 'bg-green-100 text-green-800'
                         }`}>
-                          {trip.status === 'assigned' ? 'Assigned' : 'In Progress'}
+                          {trip.status.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}
                         </span>
                       </div>
 
@@ -398,7 +586,7 @@ export const RealtimeTracking: React.FC = () => {
                               <div className="flex items-center gap-2">
                                 <Clock className="text-gray-600" size={16} />
                                 <span className="text-sm text-gray-900">
-                                  {formatTime(trip.scheduledPickupTime)}
+                                  {trip.scheduledPickupTime ? formatTime(trip.scheduledPickupTime) : 'N/A'}
                                 </span>
                               </div>
                             </div>
@@ -415,7 +603,7 @@ export const RealtimeTracking: React.FC = () => {
                             <span className="text-sm font-medium">Tracking Active</span>
                           </div>
                           <p className="text-xs text-gray-500">
-                            {getTimeSince(location.last_updated)}
+                            {getTimeSince(location.last_update)}
                           </p>
                           {location.speed && (
                             <p className="text-xs text-gray-600 mt-1">
@@ -642,7 +830,7 @@ export const RealtimeTracking: React.FC = () => {
                                 <div className="flex items-center gap-2">
                                   <Clock className="text-gray-600" size={16} />
                                   <span className="text-sm text-gray-900">
-                                    {formatTime(trip.scheduledPickupTime)}
+                                    {trip.scheduledPickupTime ? formatTime(trip.scheduledPickupTime) : 'N/A'}
                                   </span>
                                 </div>
                                 <div className="flex items-center gap-2">

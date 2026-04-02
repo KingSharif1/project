@@ -17,6 +17,7 @@ import earningsRoutes from './routes/earnings.js';
 import auditRoutes from './routes/audit.js';
 import settingsRoutes from './routes/settings.js';
 import uploadsRoutes from './routes/uploads.js';
+import messagesRoutes from './routes/messages.js';
 
 dotenv.config();
 
@@ -25,7 +26,7 @@ const PORT = process.env.PORT || 3000;
 
 // Middleware
 app.use(cors({
-  origin: ['http://localhost:5173', 'http://localhost:8081', 'http://127.0.0.1:56055', 'exp://127.0.0.1:8081', 'http://192.168.1.132:8081', 'exp://192.168.1.132:8081'],
+  origin: ['http://localhost:5173', 'http://localhost:8081', 'http://127.0.0.1:52558', 'exp://127.0.0.1:8081', 'http://192.168.1.129:8081', 'exp://192.168.1.129:8081'],
   credentials: true
 }));
 app.use(express.json());
@@ -75,6 +76,7 @@ app.use('/api/earnings', earningsRoutes);
 app.use('/api/audit', auditRoutes);
 app.use('/api/settings', settingsRoutes);
 app.use('/api/uploads', uploadsRoutes);
+app.use('/api/messages', messagesRoutes);
 
 // 404 handler
 app.use((req, res) => {

@@ -20,7 +20,6 @@ export const calculateDriverEarnings = (driver: Driver, trip: Trip) => {
   let mileagePay = 0;
   const waitTimePay = 0;
   let bonus = 0;
-  let deductionTotal = 0;
 
   const tripType = trip.trip_type?.toLowerCase() || 'ambulatory';
   const distance = trip.distance_miles || 0;
@@ -48,14 +47,8 @@ export const calculateDriverEarnings = (driver: Driver, trip: Trip) => {
       }
     }
 
-    // Apply deductions [rental, insurance, %]
-    const deductions = rates.deductions;
-    if (deductions && Array.isArray(deductions)) {
-      const [rental, insurance, percentage] = deductions;
-      if (rental) deductionTotal += rental;
-      if (insurance) deductionTotal += insurance;
-      if (percentage) deductionTotal += (baseFare + mileagePay) * (percentage / 100);
-    }
+    // NOTE: Deductions (rental, insurance, %) are applied per PAY PERIOD in the payout export,
+    // NOT per trip. See DriverProfilePage payout export modal for deduction logic.
   } else {
     // Default rates if no tiers configured
     const defaults: Record<string, { base: number; baseMiles: number; additional: number }> = {
@@ -72,7 +65,7 @@ export const calculateDriverEarnings = (driver: Driver, trip: Trip) => {
 
   if (distance > 50) bonus = 10;
 
-  const totalEarnings = Math.max(0, baseFare + mileagePay + waitTimePay + bonus - deductionTotal);
+  const totalEarnings = Math.max(0, baseFare + mileagePay + waitTimePay + bonus);
 
   return {
     base_fare: baseFare,

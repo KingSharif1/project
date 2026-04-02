@@ -1,0 +1,1 @@
+This is a private, internal-only application built for personal use by a single developer. There are no external 'consumers' or public users, so a consumer-facing MFA flow is not applicable. Access to the hosting environment itself is protected by administrative MFA.

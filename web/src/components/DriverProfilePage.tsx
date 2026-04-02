@@ -4,10 +4,12 @@ import {
   Car, Heart, Clipboard, Calendar, MapPin, Star, Award, Clock, Phone,
   Mail, Edit, Trash2, CheckCircle, XCircle, AlertTriangle, Download,
   Upload, Eye, MessageSquare, Ban, CheckSquare, Filter, Search,
-  CreditCard, Package, Settings, Bell, Plus, Tag, Folder, Paperclip
+  CreditCard, Package, Settings, Plus, Tag, Folder, Paperclip
 } from 'lucide-react';
 import { StatusBadge } from './StatusBadge';
 import { DriverRateTiers } from './DriverRateTiers';
+import { calculateDriverPayout } from '../utils/rateCalculator';
+import { generateDriverPaymentPDF, generateDriverPaymentCSV } from '../utils/driverPaymentPDF';
 import * as api from '../services/api';
 
 interface DriverProfilePageProps {
@@ -37,9 +39,22 @@ export const DriverProfilePage: React.FC<DriverProfilePageProps> = ({
   const [editMode, setEditMode] = useState(false);
   const [messageText, setMessageText] = useState('');
   const [showMessageModal, setShowMessageModal] = useState(false);
+  const [messageHistory, setMessageHistory] = useState<any[]>([]);
+  const [loadingMessages, setLoadingMessages] = useState(false);
+  const [sendingMessage, setSendingMessage] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [dateFilter, setDateFilter] = useState<'all' | 'today' | 'week' | 'month' | 'custom'>('all');
   const [statusFilter, setStatusFilter] = useState<'all' | 'completed' | 'cancelled' | 'no-show'>('all');
+  const [showPayoutExport, setShowPayoutExport] = useState(false);
+  const [exportDateRange, setExportDateRange] = useState<{ start: string; end: string }>({
+    start: new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0],
+    end: new Date().toISOString().split('T')[0],
+  });
+  const [exportLoading, setExportLoading] = useState(false);
+  // Payout export: deduction toggles & custom items
+  const [deductionToggles, setDeductionToggles] = useState({ rental: true, insurance: true, percentage: true });
+  const [customDeductions, setCustomDeductions] = useState<{ label: string; amount: number }[]>([]);
+  const [customBonuses, setCustomBonuses] = useState<{ label: string; amount: number }[]>([]);
 
   const [editedDriver, setEditedDriver] = useState({
     firstName: driver.firstName || '',
@@ -48,12 +63,7 @@ export const DriverProfilePage: React.FC<DriverProfilePageProps> = ({
     phone: driver.phone || '',
     licenseNumber: driver.licenseNumber || '',
     dateOfBirth: driver.dateOfBirth || '',
-    dateOfHire: driver.dateOfHire || '',
-    socialSecurityNumber: driver.socialSecurityNumber || '',
     address: driver.address || '',
-    emergencyContact: driver.emergencyContact || '',
-    emergencyPhone: driver.emergencyPhone || '',
-    notes: driver.notes || ''
   });
 
   const [documents, setDocuments] = useState({
@@ -76,6 +86,9 @@ export const DriverProfilePage: React.FC<DriverProfilePageProps> = ({
 
   const [uploadStatus, setUploadStatus] = useState<{[key: string]: 'idle' | 'uploading' | 'success' | 'error'}>({});
 
+  // Dynamically computed driver payouts keyed by trip ID
+  const [computedPayouts, setComputedPayouts] = useState<Record<string, number>>({});
+
   // Fetched document submissions from DB
   const [docSubmissions, setDocSubmissions] = useState<any[]>([]);
 
@@ -90,9 +103,48 @@ export const DriverProfilePage: React.FC<DriverProfilePageProps> = ({
     }
   }, [driver.id]);
 
+  const fetchDriverSignature = useCallback(async () => {
+    try {
+      const result = await api.getDriverSignature(driver.id);
+      if (result.success && result.data?.signature_data) {
+        setDriverSignature(result.data.signature_data);
+      }
+    } catch (err) {
+      console.error('Failed to fetch driver signature:', err);
+    }
+  }, [driver.id]);
+
   useEffect(() => {
     fetchDocSubmissions();
-  }, [fetchDocSubmissions]);
+    fetchDriverSignature();
+  }, [fetchDocSubmissions, fetchDriverSignature]);
+
+  // Compute driver payouts dynamically for completed trips where driverPayout is 0
+  useEffect(() => {
+    const computePayouts = async () => {
+      const completedTrips = trips.filter(
+        (t: any) => t.driverId === driver.id && t.status === 'completed' && !(t.driverPayout > 0)
+      );
+      if (completedTrips.length === 0) return;
+
+      const payoutMap: Record<string, number> = {};
+      for (const trip of completedTrips) {
+        try {
+          const result = await calculateDriverPayout(
+            driver.id,
+            (trip.serviceLevel || 'ambulatory') as any,
+            trip.mileage || trip.distance || 0,
+            trip.status
+          );
+          payoutMap[trip.id] = result.payout;
+        } catch {
+          payoutMap[trip.id] = 0;
+        }
+      }
+      setComputedPayouts(prev => ({ ...prev, ...payoutMap }));
+    };
+    computePayouts();
+  }, [driver.id, trips]);
 
   // Custom documents system
   interface CustomDocument {
@@ -115,6 +167,7 @@ export const DriverProfilePage: React.FC<DriverProfilePageProps> = ({
   const [newDocNotes, setNewDocNotes] = useState('');
   const [newDocTags, setNewDocTags] = useState('');
   const [documentFilter, setDocumentFilter] = useState<'all' | 'required' | 'custom' | 'expiring'>('all');
+  const [driverSignature, setDriverSignature] = useState<string | null>(null);
 
   const documentCategories = [
     'Licenses & Certifications',
@@ -250,8 +303,15 @@ export const DriverProfilePage: React.FC<DriverProfilePageProps> = ({
     const cancelled = driverTrips.filter(t => t.status === 'cancelled');
     const noShow = driverTrips.filter(t => t.status === 'no-show');
 
-    const totalEarnings = completed.reduce((sum, t) => sum + (t.driverPayout || 0), 0);
-    const totalMiles = completed.reduce((sum, t) => sum + (t.distance || 0), 0);
+    const getPayoutForTrip = (t: any) => computedPayouts[t.id] ?? t.driverPayout ?? 0;
+    const totalEarnings = completed.reduce((sum, t) => sum + getPayoutForTrip(t), 0);
+    const totalMiles = completed.reduce((sum, t) => sum + (t.mileage || t.distance || 0), 0);
+
+    const now = new Date();
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const thisMonthEarnings = completed
+      .filter(t => new Date(t.scheduledTime) >= monthStart)
+      .reduce((sum, t) => sum + getPayoutForTrip(t), 0);
 
     const completionRate = driverTrips.length > 0
       ? (completed.length / driverTrips.length) * 100
@@ -263,12 +323,13 @@ export const DriverProfilePage: React.FC<DriverProfilePageProps> = ({
       cancelled: cancelled.length,
       noShow: noShow.length,
       totalEarnings,
+      thisMonthEarnings,
       averagePerTrip: completed.length > 0 ? totalEarnings / completed.length : 0,
       totalMiles,
       completionRate,
       rating: driver.rating || 0
     };
-  }, [driverTrips, driver.rating]);
+  }, [driverTrips, driver.rating, computedPayouts]);
 
   const getDocumentStatus = (date: string | null) => {
     if (!date) return { status: 'not-set', label: 'Not Set', color: 'text-orange-600 bg-orange-50', icon: AlertTriangle };
@@ -293,11 +354,35 @@ export const DriverProfilePage: React.FC<DriverProfilePageProps> = ({
     console.log('Document dates are managed via document_submissions table');
   };
 
-  const handleSendMessage = () => {
-    if (onSendMessage && messageText.trim()) {
-      onSendMessage(driver.id, messageText);
-      setMessageText('');
-      setShowMessageModal(false);
+  const loadMessageHistory = useCallback(async () => {
+    if (!driver.userId) return;
+    setLoadingMessages(true);
+    try {
+      const result = await api.getMessages(driver.userId);
+      if (result.success) {
+        setMessageHistory(result.messages || []);
+      }
+    } catch (err) {
+      console.error('Failed to load messages:', err);
+    } finally {
+      setLoadingMessages(false);
+    }
+  }, [driver.userId]);
+
+  const handleSendMessage = async () => {
+    if (!messageText.trim() || !driver.userId) return;
+    setSendingMessage(true);
+    try {
+      const result = await api.sendMessage(driver.userId, messageText.trim());
+      if (result.success) {
+        setMessageHistory(prev => [...prev, result.message]);
+        setMessageText('');
+      }
+    } catch (err) {
+      console.error('Failed to send message:', err);
+      alert('Failed to send message. Please try again.');
+    } finally {
+      setSendingMessage(false);
     }
   };
 
@@ -613,13 +698,6 @@ export const DriverProfilePage: React.FC<DriverProfilePageProps> = ({
                     </div>
 
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">License Number</label>
-                      <p className="text-gray-900 font-medium">
-                        {driver.licenseNumber || 'Not set'}
-                      </p>
-                    </div>
-
-                    <div>
                       <label className="block text-sm font-medium text-gray-700 mb-1">Date of Birth</label>
                       {editMode ? (
                         <input
@@ -638,40 +716,14 @@ export const DriverProfilePage: React.FC<DriverProfilePageProps> = ({
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">
                         <Calendar className="w-4 h-4 mr-1 text-green-600" />
-                        Date of Hire
+                        Member Since
                       </label>
-                      {editMode ? (
-                        <input
-                          type="date"
-                          value={editedDriver.dateOfHire}
-                          onChange={e => setEditedDriver({...editedDriver, dateOfHire: e.target.value})}
-                          className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                        />
-                      ) : (
-                        <p className="text-gray-900 font-medium">
-                          {driver.dateOfHire ? new Date(driver.dateOfHire).toLocaleDateString() : 'Not set'}
-                        </p>
-                      )}
-                      {!editMode && driver.dateOfHire && (
+                      <p className="text-gray-900 font-medium">
+                        {driver.createdAt ? new Date(driver.createdAt).toLocaleDateString() : 'Unknown'}
+                      </p>
+                      {driver.createdAt && (
                         <p className="text-xs text-gray-500 mt-1">
-                          {Math.floor((new Date().getTime() - new Date(driver.dateOfHire).getTime()) / (1000 * 60 * 60 * 24 * 365))} years with company
-                        </p>
-                      )}
-                    </div>
-
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Social Security Number</label>
-                      {editMode ? (
-                        <input
-                          type="password"
-                          value={editedDriver.socialSecurityNumber}
-                          onChange={e => setEditedDriver({...editedDriver, socialSecurityNumber: e.target.value})}
-                          placeholder="XXX-XX-XXXX"
-                          className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                        />
-                      ) : (
-                        <p className="text-gray-900 font-medium">
-                          {driver.socialSecurityNumber ? '•••-••-' + driver.socialSecurityNumber.slice(-4) : 'Not provided'}
+                          {Math.floor((new Date().getTime() - new Date(driver.createdAt).getTime()) / (1000 * 60 * 60 * 24))} days
                         </p>
                       )}
                     </div>
@@ -682,21 +734,24 @@ export const DriverProfilePage: React.FC<DriverProfilePageProps> = ({
                         Vehicle Assignment
                       </label>
                       <p className="text-gray-900 font-medium">
-                        {driver.vehicleId ? `Vehicle #${driver.vehicleId.slice(0, 8)}` : 'Not assigned'}
+                        {driver.assignedVehicle || (driver.assignedVehicleId ? `Vehicle #${driver.assignedVehicleId.slice(0, 8)}` : 'Not assigned')}
                       </p>
                     </div>
                   </div>
                 </div>
 
                 {/* Additional Information */}
-                <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="mt-6">
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">Address</label>
+                    <label className="block text-sm font-medium text-gray-700 mb-2 flex items-center">
+                      <MapPin className="w-4 h-4 mr-1" />
+                      Address
+                    </label>
                     {editMode ? (
-                      <textarea
+                      <input
+                        type="text"
                         value={editedDriver.address}
                         onChange={e => setEditedDriver({...editedDriver, address: e.target.value})}
-                        rows={2}
                         className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                         placeholder="Street address, city, state, zip"
                       />
@@ -704,54 +759,6 @@ export const DriverProfilePage: React.FC<DriverProfilePageProps> = ({
                       <p className="text-gray-700">{driver.address || 'Not provided'}</p>
                     )}
                   </div>
-
-                  <div className="space-y-4">
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">Emergency Contact Name</label>
-                      {editMode ? (
-                        <input
-                          type="text"
-                          value={editedDriver.emergencyContact}
-                          onChange={e => setEditedDriver({...editedDriver, emergencyContact: e.target.value})}
-                          className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                          placeholder="Emergency contact name"
-                        />
-                      ) : (
-                        <p className="text-gray-700">{driver.emergencyContact || 'Not provided'}</p>
-                      )}
-                    </div>
-
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">Emergency Phone</label>
-                      {editMode ? (
-                        <input
-                          type="tel"
-                          value={editedDriver.emergencyPhone}
-                          onChange={e => setEditedDriver({...editedDriver, emergencyPhone: e.target.value})}
-                          className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                          placeholder="Emergency contact phone"
-                        />
-                      ) : (
-                        <p className="text-gray-700">{driver.emergencyPhone || 'Not provided'}</p>
-                      )}
-                    </div>
-                  </div>
-                </div>
-
-                {/* Notes */}
-                <div className="mt-6">
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Notes</label>
-                  {editMode ? (
-                    <textarea
-                      value={editedDriver.notes}
-                      onChange={e => setEditedDriver({...editedDriver, notes: e.target.value})}
-                      rows={3}
-                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                      placeholder="Add any notes about this driver..."
-                    />
-                  ) : (
-                    <p className="text-gray-700">{driver.notes || 'No notes added'}</p>
-                  )}
                 </div>
               </div>
 
@@ -1129,6 +1136,51 @@ export const DriverProfilePage: React.FC<DriverProfilePageProps> = ({
                 <span>Save All Required Documents</span>
               </button>
 
+              {/* Driver Signature Section */}
+              <div className="border-t-4 border-gray-200 pt-8 mt-8">
+                <div className="bg-gradient-to-r from-indigo-50 to-purple-50 rounded-lg border-2 border-indigo-200 p-6">
+                  <div className="flex items-start justify-between mb-4">
+                    <div>
+                      <h3 className="text-xl font-bold text-gray-900 flex items-center gap-2">
+                        <Edit className="w-6 h-6 text-indigo-600" />
+                        Driver Signature
+                      </h3>
+                      <p className="text-sm text-gray-600 mt-1">
+                        Driver captures signature in mobile app • Used for all trip completions
+                      </p>
+                    </div>
+                  </div>
+
+                  {driverSignature ? (
+                    <div className="bg-white rounded-lg border-2 border-gray-200 p-4">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-sm font-semibold text-gray-700">Driver's Signature:</span>
+                        <span className="text-xs text-green-600 bg-green-100 px-2 py-1 rounded-full flex items-center gap-1">
+                          <CheckCircle className="w-3 h-3" /> Active
+                        </span>
+                      </div>
+                      <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
+                        <img 
+                          src={driverSignature} 
+                          alt="Driver Signature" 
+                          className="max-h-32 mx-auto"
+                        />
+                      </div>
+                      <p className="text-xs text-gray-500 text-center mt-2">
+                        Captured by driver in mobile app
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="bg-white rounded-lg border-2 border-dashed border-gray-300 p-8 text-center">
+                      <Edit className="w-12 h-12 text-gray-400 mx-auto mb-3" />
+                      <p className="text-gray-600 font-medium mb-2">No signature on file</p>
+                      <p className="text-sm text-gray-500">Driver needs to add signature in mobile app</p>
+                      <p className="text-xs text-gray-400 mt-2">Profile → Documents → Driver Signature</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
               {/* Custom Documents Section */}
               <div className="border-t-4 border-gray-200 pt-8 mt-8">
                 <div className="flex items-center justify-between mb-6">
@@ -1467,10 +1519,10 @@ export const DriverProfilePage: React.FC<DriverProfilePageProps> = ({
                     </div>
                   </div>
                   <div className="text-3xl font-bold text-purple-600 mb-1">
-                    ${(stats.totalEarnings * 0.3).toFixed(2)}
+                    ${stats.thisMonthEarnings.toFixed(2)}
                   </div>
                   <h3 className="text-sm font-semibold text-gray-700">This Month</h3>
-                  <p className="text-xs text-gray-600 mt-1">Estimated earnings</p>
+                  <p className="text-xs text-gray-600 mt-1">Current month earnings</p>
                 </div>
               </div>
 
@@ -1494,19 +1546,272 @@ export const DriverProfilePage: React.FC<DriverProfilePageProps> = ({
                         </div>
                         <div className="text-right">
                           <p className="font-semibold text-green-600">
-                            +${(trip.driverPayout || 0).toFixed(2)}
+                            +${(computedPayouts[trip.id] ?? trip.driverPayout ?? 0).toFixed(2)}
                           </p>
-                          <p className="text-xs text-gray-500">{trip.distance} mi</p>
+                          <p className="text-xs text-gray-500">{(trip.mileage || trip.distance || 0)} mi</p>
                         </div>
                       </div>
                     ))}
                 </div>
 
-                <button className="w-full mt-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors flex items-center justify-center space-x-2">
+                <button
+                  onClick={() => setShowPayoutExport(true)}
+                  className="w-full mt-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors flex items-center justify-center space-x-2 font-medium"
+                >
                   <Download className="w-4 h-4" />
-                  <span>Download Payment Statement</span>
+                  <span>Export Payment Statement</span>
                 </button>
               </div>
+
+              {/* Payout Export Modal */}
+              {showPayoutExport && (
+                <div className="bg-white border border-gray-200 rounded-lg p-6">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="font-bold text-gray-900 text-lg flex items-center">
+                      <DollarSign className="w-5 h-5 mr-2" />
+                      Export Payment Statement
+                    </h3>
+                    <button onClick={() => setShowPayoutExport(false)} className="text-gray-400 hover:text-gray-600">
+                      <X className="w-5 h-5" />
+                    </button>
+                  </div>
+
+                  <div className="flex items-center gap-4 mb-4">
+                    <div className="flex items-center gap-2">
+                      <label className="text-sm font-medium text-gray-700">From:</label>
+                      <input
+                        type="date"
+                        value={exportDateRange.start}
+                        onChange={e => setExportDateRange(prev => ({ ...prev, start: e.target.value }))}
+                        className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
+                      />
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <label className="text-sm font-medium text-gray-700">To:</label>
+                      <input
+                        type="date"
+                        value={exportDateRange.end}
+                        onChange={e => setExportDateRange(prev => ({ ...prev, end: e.target.value }))}
+                        className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
+                      />
+                    </div>
+                  </div>
+
+                  {(() => {
+                    const startD = new Date(exportDateRange.start);
+                    startD.setHours(0, 0, 0, 0);
+                    const endD = new Date(exportDateRange.end);
+                    endD.setHours(23, 59, 59, 999);
+                    const rangeTrips = driverTrips
+                      .filter(t => t.status === 'completed')
+                      .filter(t => {
+                        const d = new Date(t.scheduledTime);
+                        return d >= startD && d <= endD;
+                      });
+
+                    // Gross = sum of per-trip payouts (no deductions applied per trip)
+                    const grossPayout = rangeTrips.reduce((sum, t) => sum + (computedPayouts[t.id] ?? t.driverPayout ?? 0), 0);
+                    const totalMiles = rangeTrips.reduce((sum, t) => sum + (t.mileage || t.distance || 0), 0);
+
+                    // Per-pay-period deductions from driver.rates.deductions [rental, insurance, %]
+                    const driverDeductions = driver.rates?.deductions || [];
+                    const [rentalAmt = 0, insuranceAmt = 0, pctAmt = 0] = driverDeductions;
+                    let totalDeductions = 0;
+                    if (deductionToggles.rental && rentalAmt > 0) totalDeductions += rentalAmt;
+                    if (deductionToggles.insurance && insuranceAmt > 0) totalDeductions += insuranceAmt;
+                    if (deductionToggles.percentage && pctAmt > 0) totalDeductions += grossPayout * (pctAmt / 100);
+                    // Custom deductions
+                    const customDedTotal = customDeductions.reduce((s, d) => s + (d.amount || 0), 0);
+                    totalDeductions += customDedTotal;
+                    // Custom bonuses
+                    const customBonTotal = customBonuses.reduce((s, b) => s + (b.amount || 0), 0);
+
+                    const netPayout = Math.max(0, grossPayout - totalDeductions + customBonTotal);
+
+                    const handleExportPDF = () => {
+                      const deductionsList = [];
+                      if (deductionToggles.percentage && pctAmt > 0) {
+                        deductionsList.push({ label: `Percentage Deduction (${pctAmt}%)`, amount: grossPayout * (pctAmt / 100) });
+                      }
+                      if (deductionToggles.rental && rentalAmt > 0) {
+                        deductionsList.push({ label: 'Vehicle Rental', amount: rentalAmt });
+                      }
+                      if (deductionToggles.insurance && insuranceAmt > 0) {
+                        deductionsList.push({ label: 'Insurance', amount: insuranceAmt });
+                      }
+                      customDeductions.forEach(d => {
+                        if (d.amount > 0 && d.label) deductionsList.push({ label: d.label, amount: d.amount });
+                      });
+
+                      generateDriverPaymentPDF({
+                        driverName: driver.name,
+                        startDate: new Date(exportDateRange.start).toLocaleDateString('en-US'),
+                        endDate: new Date(exportDateRange.end).toLocaleDateString('en-US'),
+                        trips: rangeTrips,
+                        grossTotal: grossPayout,
+                        deductions: deductionsList,
+                        bonuses: customBonuses.filter(b => b.amount > 0 && b.label),
+                        netAmount: netPayout
+                      });
+                    };
+
+                    const handleExportCSV = () => {
+                      const deductionsList = [];
+                      if (deductionToggles.percentage && pctAmt > 0) {
+                        deductionsList.push({ label: `Percentage Deduction (${pctAmt}%)`, amount: grossPayout * (pctAmt / 100) });
+                      }
+                      if (deductionToggles.rental && rentalAmt > 0) {
+                        deductionsList.push({ label: 'Vehicle Rental', amount: rentalAmt });
+                      }
+                      if (deductionToggles.insurance && insuranceAmt > 0) {
+                        deductionsList.push({ label: 'Insurance', amount: insuranceAmt });
+                      }
+                      customDeductions.forEach(d => {
+                        if (d.amount > 0 && d.label) deductionsList.push({ label: d.label, amount: d.amount });
+                      });
+
+                      generateDriverPaymentCSV({
+                        driverName: driver.name,
+                        startDate: new Date(exportDateRange.start).toLocaleDateString('en-US'),
+                        endDate: new Date(exportDateRange.end).toLocaleDateString('en-US'),
+                        trips: rangeTrips,
+                        grossTotal: grossPayout,
+                        deductions: deductionsList,
+                        bonuses: customBonuses.filter(b => b.amount > 0 && b.label),
+                        netAmount: netPayout
+                      });
+                    };
+
+                    return (
+                      <>
+                        {/* Trip list */}
+                        <div className="bg-gray-50 rounded-lg p-4 mb-4 max-h-48 overflow-y-auto">
+                          <p className="text-sm text-gray-600 mb-2">{rangeTrips.length} completed trips · {totalMiles.toFixed(1)} total miles</p>
+                          <div className="space-y-1 text-sm">
+                            {rangeTrips.map(t => (
+                              <div key={t.id} className="flex justify-between text-gray-700">
+                                <span>{new Date(t.scheduledTime).toLocaleDateString()} — {t.customerName} ({t.serviceLevel || 'ambulatory'}, {t.mileage || t.distance || 0} mi)</span>
+                                <span className="font-medium">${(computedPayouts[t.id] ?? t.driverPayout ?? 0).toFixed(2)}</span>
+                              </div>
+                            ))}
+                            {rangeTrips.length === 0 && (
+                              <p className="text-gray-400 text-center py-4">No completed trips in this date range</p>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Gross */}
+                        <div className="flex justify-between items-center px-2 py-2 text-sm font-semibold border-b">
+                          <span>Gross Payout ({rangeTrips.length} trips)</span>
+                          <span className="text-green-700">${grossPayout.toFixed(2)}</span>
+                        </div>
+
+                        {/* Deduction toggles */}
+                        <div className="mt-3 mb-2">
+                          <p className="text-xs font-semibold text-gray-500 uppercase mb-2">Pay Period Deductions</p>
+                          {rentalAmt > 0 && (
+                            <label className="flex items-center justify-between py-1 text-sm cursor-pointer">
+                              <span className="flex items-center gap-2">
+                                <input type="checkbox" checked={deductionToggles.rental} onChange={e => setDeductionToggles(p => ({ ...p, rental: e.target.checked }))} className="rounded" />
+                                Vehicle Rental
+                              </span>
+                              <span className="text-red-600">- ${rentalAmt.toFixed(2)}</span>
+                            </label>
+                          )}
+                          {insuranceAmt > 0 && (
+                            <label className="flex items-center justify-between py-1 text-sm cursor-pointer">
+                              <span className="flex items-center gap-2">
+                                <input type="checkbox" checked={deductionToggles.insurance} onChange={e => setDeductionToggles(p => ({ ...p, insurance: e.target.checked }))} className="rounded" />
+                                Insurance
+                              </span>
+                              <span className="text-red-600">- ${insuranceAmt.toFixed(2)}</span>
+                            </label>
+                          )}
+                          {pctAmt > 0 && (
+                            <label className="flex items-center justify-between py-1 text-sm cursor-pointer">
+                              <span className="flex items-center gap-2">
+                                <input type="checkbox" checked={deductionToggles.percentage} onChange={e => setDeductionToggles(p => ({ ...p, percentage: e.target.checked }))} className="rounded" />
+                                {pctAmt}% Fee
+                              </span>
+                              <span className="text-red-600">- ${(grossPayout * pctAmt / 100).toFixed(2)}</span>
+                            </label>
+                          )}
+                          {rentalAmt === 0 && insuranceAmt === 0 && pctAmt === 0 && (
+                            <p className="text-xs text-gray-400 italic">No deductions configured for this driver</p>
+                          )}
+
+                          {/* Custom deductions */}
+                          {customDeductions.map((d, i) => (
+                            <div key={`ded-${i}`} className="flex items-center gap-2 py-1 text-sm">
+                              <input type="text" value={d.label} placeholder="Label" onChange={e => { const arr = [...customDeductions]; arr[i] = { ...arr[i], label: e.target.value }; setCustomDeductions(arr); }} className="flex-1 px-2 py-1 border rounded text-sm" />
+                              <span className="text-red-600">- $</span>
+                              <input type="number" value={d.amount || ''} min={0} step={0.01} onChange={e => { const arr = [...customDeductions]; arr[i] = { ...arr[i], amount: parseFloat(e.target.value) || 0 }; setCustomDeductions(arr); }} className="w-20 px-2 py-1 border rounded text-sm text-right" />
+                              <button onClick={() => setCustomDeductions(customDeductions.filter((_, j) => j !== i))} className="text-gray-400 hover:text-red-500"><X className="w-4 h-4" /></button>
+                            </div>
+                          ))}
+                          <button onClick={() => setCustomDeductions([...customDeductions, { label: '', amount: 0 }])} className="text-xs text-blue-600 hover:underline mt-1">+ Add Custom Deduction</button>
+                        </div>
+
+                        {/* Custom bonuses */}
+                        <div className="mb-3">
+                          <p className="text-xs font-semibold text-gray-500 uppercase mb-2">Bonuses</p>
+                          {customBonuses.map((b, i) => (
+                            <div key={`bon-${i}`} className="flex items-center gap-2 py-1 text-sm">
+                              <input type="text" value={b.label} placeholder="Label" onChange={e => { const arr = [...customBonuses]; arr[i] = { ...arr[i], label: e.target.value }; setCustomBonuses(arr); }} className="flex-1 px-2 py-1 border rounded text-sm" />
+                              <span className="text-green-600">+ $</span>
+                              <input type="number" value={b.amount || ''} min={0} step={0.01} onChange={e => { const arr = [...customBonuses]; arr[i] = { ...arr[i], amount: parseFloat(e.target.value) || 0 }; setCustomBonuses(arr); }} className="w-20 px-2 py-1 border rounded text-sm text-right" />
+                              <button onClick={() => setCustomBonuses(customBonuses.filter((_, j) => j !== i))} className="text-gray-400 hover:text-red-500"><X className="w-4 h-4" /></button>
+                            </div>
+                          ))}
+                          <button onClick={() => setCustomBonuses([...customBonuses, { label: '', amount: 0 }])} className="text-xs text-blue-600 hover:underline mt-1">+ Add Bonus</button>
+                        </div>
+
+                        {/* Net payout */}
+                        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
+                          <div className="space-y-1 text-sm">
+                            <div className="flex justify-between text-gray-700">
+                              <span>Gross</span><span>${grossPayout.toFixed(2)}</span>
+                            </div>
+                            {totalDeductions > 0 && (
+                              <div className="flex justify-between text-red-600">
+                                <span>Deductions</span><span>- ${totalDeductions.toFixed(2)}</span>
+                              </div>
+                            )}
+                            {customBonTotal > 0 && (
+                              <div className="flex justify-between text-green-600">
+                                <span>Bonuses</span><span>+ ${customBonTotal.toFixed(2)}</span>
+                              </div>
+                            )}
+                            <div className="flex justify-between pt-2 border-t font-bold text-lg text-blue-900">
+                              <span>Net Payout</span>
+                              <span>${netPayout.toFixed(2)}</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-3">
+                          <button
+                            onClick={handleExportPDF}
+                            disabled={rangeTrips.length === 0}
+                            className="py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors flex items-center justify-center space-x-2 font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            <Download className="w-4 h-4" />
+                            <span>Download PDF</span>
+                          </button>
+                          <button
+                            onClick={handleExportCSV}
+                            disabled={rangeTrips.length === 0}
+                            className="py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors flex items-center justify-center space-x-2 font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            <Download className="w-4 h-4" />
+                            <span>Download CSV</span>
+                          </button>
+                        </div>
+                      </>
+                    );
+                  })()}
+                </div>
+              )}
 
               {/* Rate Configuration - New Dynamic Component */}
               <DriverRateTiers driverId={driver.id} onClose={() => {}} />
@@ -1566,14 +1871,14 @@ export const DriverProfilePage: React.FC<DriverProfilePageProps> = ({
                     Assign Vehicle
                   </label>
                   <select
-                    value={driver.vehicleId || ''}
+                    value={driver.assignedVehicleId || ''}
                     onChange={(e) => onAssignVehicle?.(driver.id, e.target.value)}
                     className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   >
                     <option value="">No vehicle assigned</option>
                     {vehicles.map(vehicle => (
                       <option key={vehicle.id} value={vehicle.id}>
-                        {vehicle.make} {vehicle.model} - {vehicle.plateNumber}
+                        {vehicle.year ? `${vehicle.year} ` : ''}{vehicle.make} {vehicle.model} — {vehicle.licensePlate}{vehicle.color ? ` (${vehicle.color})` : ''}
                       </option>
                     ))}
                   </select>
@@ -1587,11 +1892,14 @@ export const DriverProfilePage: React.FC<DriverProfilePageProps> = ({
                   Communication
                 </h3>
                 <button
-                  onClick={() => setShowMessageModal(true)}
+                  onClick={() => {
+                    setShowMessageModal(true);
+                    loadMessageHistory();
+                  }}
                   className="w-full py-3 bg-blue-600 text-white rounded-lg font-semibold hover:bg-blue-700 transition-colors flex items-center justify-center space-x-2"
                 >
-                  <Bell className="w-5 h-5" />
-                  <span>Send Message or Alert</span>
+                  <MessageSquare className="w-5 h-5" />
+                  <span>Send Message</span>
                 </button>
               </div>
 
@@ -1613,12 +1921,16 @@ export const DriverProfilePage: React.FC<DriverProfilePageProps> = ({
         </div>
       </div>
 
-      {/* Message Modal */}
+      {/* Message Modal — Chat Style */}
       {showMessageModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[60] p-4">
-          <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-bold text-gray-900">Send Message</h3>
+          <div className="bg-white rounded-xl shadow-xl max-w-lg w-full flex flex-col" style={{ maxHeight: '80vh' }}>
+            {/* Header */}
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
+              <div>
+                <h3 className="text-lg font-bold text-gray-900">Message {driver.firstName} {driver.lastName}</h3>
+                <p className="text-sm text-gray-500">Driver</p>
+              </div>
               <button
                 onClick={() => setShowMessageModal(false)}
                 className="p-1 hover:bg-gray-100 rounded"
@@ -1626,30 +1938,73 @@ export const DriverProfilePage: React.FC<DriverProfilePageProps> = ({
                 <X className="w-5 h-5" />
               </button>
             </div>
-            <textarea
-              value={messageText}
-              onChange={e => setMessageText(e.target.value)}
-              placeholder="Type your message to the driver..."
-              rows={4}
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent mb-4"
-            />
-            <div className="flex space-x-3">
-              <button
-                onClick={() => setShowMessageModal(false)}
-                className="flex-1 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleSendMessage}
-                className="flex-1 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-              >
-                Send Message
-              </button>
+
+            {/* Message History */}
+            <div className="flex-1 overflow-y-auto px-6 py-4 space-y-3 min-h-[200px] max-h-[400px] bg-gray-50">
+              {loadingMessages ? (
+                <div className="flex items-center justify-center h-full text-gray-400">
+                  <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600 mr-2" />
+                  Loading messages...
+                </div>
+              ) : messageHistory.length === 0 ? (
+                <div className="flex items-center justify-center h-full text-gray-400 text-sm">
+                  No messages yet. Start the conversation!
+                </div>
+              ) : (
+                messageHistory.map((msg: any) => (
+                  <div key={msg.id} className={`flex ${msg.isMe ? 'justify-end' : 'justify-start'}`}>
+                    <div className={`max-w-[75%] rounded-2xl px-4 py-2 ${
+                      msg.isMe
+                        ? 'bg-blue-600 text-white rounded-br-md'
+                        : 'bg-white text-gray-900 border border-gray-200 rounded-bl-md'
+                    }`}>
+                      {!msg.isMe && (
+                        <p className="text-xs font-semibold text-blue-600 mb-1">{msg.senderName} ({msg.senderRole})</p>
+                      )}
+                      <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
+                      <p className={`text-xs mt-1 ${msg.isMe ? 'text-blue-200' : 'text-gray-400'}`}>
+                        {new Date(msg.createdAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                      </p>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+
+            {/* Input */}
+            <div className="px-6 py-4 border-t border-gray-200">
+              <div className="flex items-end space-x-3">
+                <textarea
+                  value={messageText}
+                  onChange={e => setMessageText(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      handleSendMessage();
+                    }
+                  }}
+                  placeholder="Type a message..."
+                  rows={2}
+                  className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
+                />
+                <button
+                  onClick={handleSendMessage}
+                  disabled={sendingMessage || !messageText.trim()}
+                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center space-x-1"
+                >
+                  {sendingMessage ? (
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white" />
+                  ) : (
+                    <span>Send</span>
+                  )}
+                </button>
+              </div>
+              <p className="text-xs text-gray-400 mt-1">Press Enter to send, Shift+Enter for new line</p>
             </div>
           </div>
         </div>
       )}
+
     </div>
   );
 };

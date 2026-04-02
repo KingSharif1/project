@@ -1,0 +1,9 @@
+Information Security Policy - Personal Finance Dashboard
+
+Objective: To ensure the confidentiality and integrity of financial data for a personal-use application.
+
+Key Management: Plaid API keys are stored exclusively in encrypted environment variables (.env) and are never committed to version control.
+
+Access Control: Access to the development environment and Plaid Dashboard is restricted to the primary developer via hardware-based MFA.
+
+Data Handling: No third-party access is permitted. Data is used solely for personal financial visualization.

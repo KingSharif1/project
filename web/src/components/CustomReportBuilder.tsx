@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { useAuth } from '../context/AuthContext';
+import { calculateContractorRate } from '../utils/rateCalculator';
 import { StatusBadge } from './StatusBadge';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -70,7 +71,7 @@ interface CustomReportBuilderProps {
 }
 
 export const CustomReportBuilder: React.FC<CustomReportBuilderProps> = ({ onClose }) => {
-  const { trips, drivers, clinics, patients } = useApp();
+  const { trips, drivers, clinics, patients, contractors } = useApp();
   const { user, isAdmin } = useAuth();
 
   const [selectedSections, setSelectedSections] = useState<string[]>(['billing', 'trips']);
@@ -123,9 +124,24 @@ export const CustomReportBuilder: React.FC<CustomReportBuilderProps> = ({ onClos
     const cancelledTrips = filteredTrips.filter(t => t.status === 'cancelled');
     const noShowTrips = filteredTrips.filter(t => t.status === 'no-show');
 
-    const completedRevenue = completedTrips.reduce((sum, t) => sum + t.fare, 0);
-    const cancelledRevenue = cancelledTrips.reduce((sum, t) => sum + t.fare, 0);
-    const noShowRevenue = noShowTrips.reduce((sum, t) => sum + t.fare, 0);
+    const getTripFare = (trip: any): number => {
+      if (trip.fare && trip.fare > 0) return trip.fare;
+      const rateSource = (trip.contractorId ? contractors.find((c: any) => c.id === trip.contractorId) : null)
+        || (trip.clinicId ? clinics.find((c: any) => c.id === trip.clinicId) : null);
+      if (rateSource && (trip.distance || trip.distanceMiles)) {
+        const calc = calculateContractorRate(
+          (trip.serviceLevel || 'ambulatory') as any,
+          trip.distance || trip.distanceMiles || 0,
+          rateSource as any
+        );
+        return calc.rate;
+      }
+      return 0;
+    };
+
+    const completedRevenue = completedTrips.reduce((sum, t) => sum + getTripFare(t), 0);
+    const cancelledRevenue = cancelledTrips.reduce((sum, t) => sum + getTripFare(t), 0);
+    const noShowRevenue = noShowTrips.reduce((sum, t) => sum + getTripFare(t), 0);
 
     return {
       totalTrips: filteredTrips.length,

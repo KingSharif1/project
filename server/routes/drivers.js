@@ -129,7 +129,7 @@ router.get('/', async (req, res) => {
       .from('drivers')
       .select(`
         *,
-        user:users(id, email, first_name, last_name, phone),
+        user:users(id, email, first_name, last_name, phone, address, city, state, zip_code, date_of_birth, profile_image_url),
         vehicle:vehicles!drivers_assigned_vehicle_id_fkey(id, make, model, license_plate)
       `)
       .order('created_at', { ascending: false });
@@ -144,6 +144,21 @@ router.get('/', async (req, res) => {
     if (error) {
       console.error('Error fetching drivers:', error);
       return res.status(500).json({ error: 'Failed to fetch drivers' });
+    }
+
+    // Get trip counts per driver in one query
+    const driverIds = data.map(d => d.id);
+    let tripCounts = {};
+    if (driverIds.length > 0) {
+      const { data: tripData } = await supabase
+        .from('trips')
+        .select('driver_id')
+        .in('driver_id', driverIds);
+      if (tripData) {
+        for (const t of tripData) {
+          tripCounts[t.driver_id] = (tripCounts[t.driver_id] || 0) + 1;
+        }
+      }
     }
 
     // Transform to frontend format — only columns that exist in DB
@@ -169,6 +184,13 @@ router.get('/', async (req, res) => {
       isActive: d.user?.status !== 'inactive',
       rates: d.rates || {},
       clinicId: d.clinic_id,
+      address: d.user?.address || null,
+      city: d.user?.city || null,
+      state: d.user?.state || null,
+      zipCode: d.user?.zip_code || null,
+      profileImageUrl: d.user?.profile_image_url || null,
+      totalTrips: tripCounts[d.id] || 0,
+      rating: 5.0,
       createdAt: d.created_at,
       updatedAt: d.updated_at,
     }));
@@ -176,6 +198,70 @@ router.get('/', async (req, res) => {
     res.json({ success: true, data: drivers });
   } catch (error) {
     console.error('Error in GET /drivers:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+/**
+ * GET /api/drivers/locations
+ * Get online driver locations from driver_locations table
+ */
+router.get('/locations', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('driver_locations')
+      .select('*')
+      .eq('is_online', true)
+      .order('last_update', { ascending: false });
+
+    if (error) {
+      if (error.code === '42P01' || error.message?.includes('does not exist')) {
+        return res.json({ success: true, data: [] });
+      }
+      console.error('Error fetching driver locations:', error);
+      return res.status(500).json({ error: 'Failed to fetch driver locations' });
+    }
+
+    res.json({ success: true, data: data || [] });
+  } catch (error) {
+    console.error('Error in GET /drivers/locations:', error);
+    res.json({ success: true, data: [] });
+  }
+});
+
+/**
+ * GET /api/drivers/payouts
+ * Get driver payout report for completed trips in a date range (must be before /:id)
+ */
+router.get('/payouts', requireRole('superadmin', 'admin'), async (req, res) => {
+  try {
+    const { startDate, endDate, driverId } = req.query;
+
+    if (!startDate || !endDate) {
+      return res.status(400).json({ error: 'startDate and endDate are required' });
+    }
+
+    let query = supabase
+      .from('trips')
+      .select(`*, driver:drivers(id, name, email)`)
+      .eq('status', 'completed')
+      .gte('scheduled_pickup_time', `${startDate}T00:00:00`)
+      .lte('scheduled_pickup_time', `${endDate}T23:59:59`);
+
+    if (driverId && driverId !== 'all') {
+      query = query.eq('driver_id', driverId);
+    }
+
+    const { data, error } = await query;
+
+    if (error) {
+      console.error('Error fetching payouts:', error);
+      return res.status(500).json({ error: 'Failed to fetch payouts' });
+    }
+
+    res.json({ success: true, data: data || [] });
+  } catch (error) {
+    console.error('Error in GET /drivers/payouts:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -358,13 +444,34 @@ router.put('/:id', requireRole('superadmin', 'admin', 'dispatcher'), async (req,
       return res.status(500).json({ error: 'Failed to update driver' });
     }
 
+    // If vehicle assignment changed, sync the vehicles table too
+    if (updates.assignedVehicleId !== undefined) {
+      // Clear this driver from any previously assigned vehicle
+      await supabase
+        .from('vehicles')
+        .update({ assigned_driver_id: null, updated_at: new Date().toISOString() })
+        .eq('assigned_driver_id', id);
+
+      // Set the new vehicle's assigned_driver_id (if not unassigning)
+      if (updates.assignedVehicleId) {
+        await supabase
+          .from('vehicles')
+          .update({ assigned_driver_id: id, updated_at: new Date().toISOString() })
+          .eq('id', updates.assignedVehicleId);
+      }
+    }
+
     // If user info is being updated, update the users table too
-    if (updates.firstName || updates.lastName || updates.phone || updates.email || updates.isActive !== undefined) {
+    if (updates.firstName || updates.lastName || updates.phone || updates.email || updates.address !== undefined || updates.city !== undefined || updates.state !== undefined || updates.zipCode !== undefined || updates.isActive !== undefined) {
       const userUpdates = {};
       if (updates.firstName) userUpdates.first_name = updates.firstName;
       if (updates.lastName) userUpdates.last_name = updates.lastName;
       if (updates.phone) userUpdates.phone = updates.phone;
       if (updates.email) userUpdates.email = updates.email;
+      if (updates.address !== undefined) userUpdates.address = updates.address;
+      if (updates.city !== undefined) userUpdates.city = updates.city;
+      if (updates.state !== undefined) userUpdates.state = updates.state;
+      if (updates.zipCode !== undefined) userUpdates.zip_code = updates.zipCode;
       if (updates.isActive !== undefined) userUpdates.status = updates.isActive ? 'active' : 'inactive';
       userUpdates.updated_at = new Date().toISOString();
 
@@ -566,70 +673,6 @@ router.put('/:id/rates', requireRole('superadmin', 'admin', 'dispatcher'), async
 });
 
 /**
- * GET /api/drivers/locations
- * Get realtime driver locations
- */
-router.get('/locations', async (req, res) => {
-  try {
-    const { data, error } = await supabase
-      .from('realtime_driver_locations')
-      .select('*')
-      .order('last_updated', { ascending: false });
-
-    if (error) {
-      // Table may not exist yet — return empty array silently
-      if (error.code === '42P01' || error.message?.includes('does not exist')) {
-        return res.json({ success: true, data: [] });
-      }
-      console.error('Error fetching driver locations:', error);
-      return res.status(500).json({ error: 'Failed to fetch driver locations' });
-    }
-
-    res.json({ success: true, data: data || [] });
-  } catch (error) {
-    console.error('Error in GET /drivers/locations:', error);
-    res.json({ success: true, data: [] });
-  }
-});
-
-/**
- * GET /api/drivers/payouts
- * Get driver payout report for completed trips in a date range
- */
-router.get('/payouts', requireRole('superadmin', 'admin'), async (req, res) => {
-  try {
-    const { startDate, endDate, driverId } = req.query;
-
-    if (!startDate || !endDate) {
-      return res.status(400).json({ error: 'startDate and endDate are required' });
-    }
-
-    let query = supabase
-      .from('trips')
-      .select(`*, driver:drivers(id, name, email)`)
-      .eq('status', 'completed')
-      .gte('scheduled_pickup_time', `${startDate}T00:00:00`)
-      .lte('scheduled_pickup_time', `${endDate}T23:59:59`);
-
-    if (driverId && driverId !== 'all') {
-      query = query.eq('driver_id', driverId);
-    }
-
-    const { data, error } = await query;
-
-    if (error) {
-      console.error('Error fetching payouts:', error);
-      return res.status(500).json({ error: 'Failed to fetch payouts' });
-    }
-
-    res.json({ success: true, data: data || [] });
-  } catch (error) {
-    console.error('Error in GET /drivers/payouts:', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
-/**
  * GET /api/drivers/:id/documents
  * Get all documents for a driver
  */
@@ -750,6 +793,69 @@ router.delete('/:id/documents/:docId', requireRole('superadmin', 'admin'), async
     res.json({ success: true, message: 'Document deleted' });
   } catch (error) {
     console.error('Error in DELETE /drivers/:id/documents/:docId:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+/**
+ * POST /api/drivers/:id/signature
+ * Save driver's one-time signature
+ */
+router.post('/:id/signature', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { signatureData, latitude, longitude } = req.body;
+
+    if (!signatureData) {
+      return res.status(400).json({ error: 'Signature data is required' });
+    }
+
+    const { data, error } = await supabase
+      .from('drivers')
+      .update({
+        signature_data: signatureData,
+        signature_signed_at: new Date().toISOString(),
+        signature_location_lat: latitude || null,
+        signature_location_lng: longitude || null,
+      })
+      .eq('id', id)
+      .select('id, signature_data, signature_signed_at')
+      .single();
+
+    if (error) {
+      console.error('Error saving driver signature:', error);
+      return res.status(500).json({ error: 'Failed to save signature' });
+    }
+
+    res.json({ success: true, data });
+  } catch (error) {
+    console.error('Error in POST /drivers/:id/signature:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+/**
+ * GET /api/drivers/:id/signature
+ * Get driver's signature
+ */
+router.get('/:id/signature', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const { data, error } = await supabase
+      .from('drivers')
+      .select('signature_data, signature_signed_at, signature_location_lat, signature_location_lng')
+      .eq('id', id)
+      .single();
+
+    if (error) {
+      console.error('Error fetching driver signature:', error);
+      return res.status(500).json({ error: 'Failed to fetch signature' });
+    }
+
+    res.json({ success: true, data });
+  } catch (error) {
+    console.error('Error in GET /drivers/:id/signature:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });

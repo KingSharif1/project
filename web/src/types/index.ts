@@ -80,6 +80,7 @@ export interface User {
 
 export interface Driver {
   id: string;
+  userId?: string;
   name: string;
   firstName?: string;
   lastName?: string;
@@ -326,12 +327,12 @@ export interface Patient {
   lastName: string;
   dateOfBirth?: string;
   phone: string;
-  accountNumber?: string;
+  memberId?: string;
   serviceLevel?: 'ambulatory' | 'wheelchair' | 'stretcher';
   notes?: string;
   clinicId?: string;
-  createdAt: string;
-  updatedAt: string;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface RecurringTrip {

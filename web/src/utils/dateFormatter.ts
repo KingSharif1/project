@@ -3,13 +3,27 @@
  */
 
 /**
+ * Parse date string ensuring UTC timestamps are handled correctly
+ * - If string ends with 'Z' or has timezone info: treat as UTC, convert to local
+ * - Otherwise: treat as local time
+ */
+const parseDate = (date: string | Date): Date => {
+  if (date instanceof Date) return date;
+  
+  // If it's already a UTC timestamp (ends with Z or has +00:00), Date constructor handles it
+  // JavaScript automatically converts UTC to local timezone
+  return new Date(date);
+};
+
+/**
  * Format a date to American format: MM/DD/YYYY
+ * Handles both UTC timestamps (from database) and local times correctly
  */
 export const formatDateUS = (date: string | Date | null | undefined): string => {
   if (!date) return 'Not set';
 
   try {
-    const d = typeof date === 'string' ? new Date(date) : date;
+    const d = parseDate(date);
     if (isNaN(d.getTime())) return 'Invalid date';
 
     const month = String(d.getMonth() + 1).padStart(2, '0');
@@ -24,14 +38,17 @@ export const formatDateUS = (date: string | Date | null | undefined): string => 
 
 /**
  * Format a date to American format with time: MM/DD/YYYY HH:MM AM/PM
+ * Handles both UTC timestamps (from database) and local times correctly
  */
 export const formatDateTimeUS = (date: string | Date | null | undefined): string => {
   if (!date) return 'Not set';
 
   try {
-    const d = typeof date === 'string' ? new Date(date) : date;
+    const d = parseDate(date);
     if (isNaN(d.getTime())) return 'Invalid date';
 
+    // getMonth(), getDate(), getHours() etc. automatically return LOCAL time values
+    // JavaScript has already converted UTC to local timezone for us
     const month = String(d.getMonth() + 1).padStart(2, '0');
     const day = String(d.getDate()).padStart(2, '0');
     const year = d.getFullYear();
@@ -69,12 +86,13 @@ export const formatDateUSLong = (date: string | Date | null | undefined): string
 
 /**
  * Format time only: HH:MM AM/PM
+ * Handles both UTC timestamps (from database) and local times correctly
  */
 export const formatTimeUS = (date: string | Date | null | undefined): string => {
   if (!date) return 'Not set';
 
   try {
-    const d = typeof date === 'string' ? new Date(date) : date;
+    const d = parseDate(date);
     if (isNaN(d.getTime())) return 'Invalid time';
 
     let hours = d.getHours();

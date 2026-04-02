@@ -1,7 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { Clock, User, Edit, AlertCircle, Calendar, UserPlus } from 'lucide-react';
+import { Clock, User, Edit, AlertCircle, Calendar, UserPlus, ArrowRight, CheckCircle, XCircle, EyeOff, Truck, MapPin, UserCheck, Navigation, FileText, Map as MapIcon, Download } from 'lucide-react';
 import * as api from '../services/api';
 import { formatDateUS, formatDateTimeUS, formatTimeUS } from '../utils/dateFormatter';
+import { generateTripReportPDF } from '../utils/tripReportPDF';
+import { TripHistoryMap } from './TripHistoryMap';
 
 interface TripHistoryProps {
   tripId: string;
@@ -22,6 +24,47 @@ interface ChangeHistoryEntry {
   created_at: string;
 }
 
+interface StatusHistoryEntry {
+  id: string;
+  tripId: string;
+  oldStatus: string;
+  newStatus: string;
+  changedById?: string;
+  changedByName?: string;
+  reason?: string;
+  createdAt: string;
+}
+
+interface TripSignature {
+  id: string;
+  signature_type: string;
+  signature_data: string;
+  signer_name?: string;
+  signed_at: string;
+}
+
+interface LocationHistoryPoint {
+  latitude: number;
+  longitude: number;
+  timestamp: string;
+  speed?: number;
+  heading?: number;
+  accuracy?: number;
+}
+
+const STATUS_CONFIG: Record<string, { label: string; color: string; bgColor: string; icon: React.ReactNode }> = {
+  scheduled: { label: 'Scheduled', color: 'text-indigo-600', bgColor: 'bg-indigo-100', icon: <Calendar className="w-3.5 h-3.5" /> },
+  assigned: { label: 'Assigned', color: 'text-blue-600', bgColor: 'bg-blue-100', icon: <UserCheck className="w-3.5 h-3.5" /> },
+  en_route_pickup: { label: 'En Route to Pickup', color: 'text-amber-600', bgColor: 'bg-amber-100', icon: <Navigation className="w-3.5 h-3.5" /> },
+  arrived_pickup: { label: 'Arrived at Pickup', color: 'text-orange-600', bgColor: 'bg-orange-100', icon: <MapPin className="w-3.5 h-3.5" /> },
+  patient_loaded: { label: 'Patient Loaded', color: 'text-purple-600', bgColor: 'bg-purple-100', icon: <UserCheck className="w-3.5 h-3.5" /> },
+  en_route_dropoff: { label: 'En Route to Drop-off', color: 'text-teal-600', bgColor: 'bg-teal-100', icon: <Truck className="w-3.5 h-3.5" /> },
+  arrived_dropoff: { label: 'Arrived at Drop-off', color: 'text-cyan-700', bgColor: 'bg-cyan-100', icon: <MapPin className="w-3.5 h-3.5" /> },
+  completed: { label: 'Completed', color: 'text-green-600', bgColor: 'bg-green-100', icon: <CheckCircle className="w-3.5 h-3.5" /> },
+  cancelled: { label: 'Cancelled', color: 'text-red-600', bgColor: 'bg-red-100', icon: <XCircle className="w-3.5 h-3.5" /> },
+  no_show: { label: 'No Show', color: 'text-gray-600', bgColor: 'bg-gray-200', icon: <EyeOff className="w-3.5 h-3.5" /> },
+};
+
 export const TripHistory: React.FC<TripHistoryProps> = ({
   tripId,
   createdAt,
@@ -30,8 +73,15 @@ export const TripHistory: React.FC<TripHistoryProps> = ({
   dispatcherName
 }) => {
   const [history, setHistory] = useState<ChangeHistoryEntry[]>([]);
+  const [statusHistory, setStatusHistory] = useState<StatusHistoryEntry[]>([]);
+  const [signatures, setSignatures] = useState<TripSignature[]>([]);
+  const [locationHistory, setLocationHistory] = useState<LocationHistoryPoint[]>([]);
+  const [driverSignature, setDriverSignature] = useState<string | null>(null);
+  const [driverName, setDriverName] = useState<string>('');
+  const [tripData, setTripData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [isExpanded, setIsExpanded] = useState(false);
+  const [isStatusExpanded, setIsStatusExpanded] = useState(true);
   const [creatorName, setCreatorName] = useState<string>('');
   const [lastModifierName, setLastModifierName] = useState<string>('');
 
@@ -49,6 +99,7 @@ export const TripHistory: React.FC<TripHistoryProps> = ({
       setCreatorName(dispatcherName);
     }
   }, [tripId, createdBy, updatedAt, dispatcherName]);
+
 
   const fetchCreatorName = async () => {
     try {
@@ -69,10 +120,35 @@ export const TripHistory: React.FC<TripHistoryProps> = ({
   };
 
   const loadHistory = async () => {
-    setLoading(true);
     try {
-      const result = await api.getTripHistory(tripId);
-      setHistory(result.data || []);
+      const [histResult, statusResult, sigResult, locResult] = await Promise.all([
+        api.getTripHistory(tripId),
+        api.getTripStatusHistory(tripId),
+        api.getTripSignatures([tripId]).catch(() => ({ data: [] })),
+        api.getTripLocationHistory(tripId).catch(() => ({ data: [] })),
+      ]);
+      setHistory(histResult.data || []);
+      setStatusHistory(statusResult.data || []);
+      setSignatures(sigResult.data || []);
+      setLocationHistory(locResult.data || []);
+
+      // Fetch trip data and driver signature if trip has a driver assigned
+      try {
+        const tripResult = await api.getTrips();
+        const trip = tripResult.data?.find((t: any) => t.id === tripId);
+        if (trip) {
+          setTripData(trip);
+          if (trip.driverId) {
+            const driverSigResult = await api.getDriverSignature(trip.driverId);
+            if (driverSigResult.success && driverSigResult.data?.signature_data) {
+              setDriverSignature(driverSigResult.data.signature_data);
+              setDriverName(trip.driverName || 'Driver');
+            }
+          }
+        }
+      } catch (err) {
+        console.log('Could not fetch trip data or driver signature:', err);
+      }
     } catch (error) {
       console.error('Error loading trip history:', error);
     } finally {
@@ -127,6 +203,33 @@ export const TripHistory: React.FC<TripHistoryProps> = ({
     return 'Updated';
   };
 
+  const handleExportPDF = async () => {
+    if (!tripData) {
+      alert('Trip data not loaded yet. Please wait and try again.');
+      return;
+    }
+
+    try {
+      await generateTripReportPDF({
+        trip: tripData,
+        statusHistory: statusHistory.map(entry => ({
+          oldStatus: entry.oldStatus,
+          newStatus: entry.newStatus,
+          changedByName: entry.changedByName,
+          reason: entry.reason,
+          createdAt: entry.createdAt,
+        })),
+        patientSignature: signatures.find(s => s.signature_type === 'pickup'),
+        driverSignature: driverSignature || undefined,
+        driverName: driverName,
+        locationHistory: locationHistory,
+      });
+    } catch (error) {
+      console.error('Error generating PDF:', error);
+      alert('Failed to generate PDF report. Please try again.');
+    }
+  };
+
   if (loading) {
     return (
       <div className="text-center py-4">
@@ -141,6 +244,18 @@ export const TripHistory: React.FC<TripHistoryProps> = ({
 
   return (
     <div className="space-y-4">
+      {/* PDF Export Button */}
+      <div className="flex justify-end">
+        <button
+          onClick={handleExportPDF}
+          disabled={!tripData}
+          className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-lg hover:from-blue-700 hover:to-indigo-700 transition-all shadow-md hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed font-medium"
+        >
+          <Download className="w-4 h-4" />
+          Download Trip Report (PDF)
+        </button>
+      </div>
+
       {/* Trip Metadata Section */}
       <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-lg border border-blue-200 p-4 space-y-3">
         <h4 className="text-sm font-bold text-gray-900 flex items-center gap-2">
@@ -201,21 +316,181 @@ export const TripHistory: React.FC<TripHistoryProps> = ({
             </div>
           </div>
         )}
+
+        {/* Driver Actions Timeline */}
+        {statusHistory.length > 0 && (
+          <div className="p-3 bg-white rounded-lg border border-gray-200">
+            <div className="flex items-center gap-2 mb-3">
+              <Truck className="w-4 h-4 text-indigo-600" />
+              <span className="text-sm font-semibold text-gray-900">Driver Actions</span>
+            </div>
+            <div className="space-y-2">
+              {statusHistory.map((entry) => {
+                const config = STATUS_CONFIG[entry.newStatus] || { label: entry.newStatus?.replace(/_/g, ' '), color: 'text-gray-600', bgColor: 'bg-gray-100', icon: <Clock className="w-3.5 h-3.5" /> };
+                return (
+                  <div key={entry.id} className="flex items-center gap-2 text-xs">
+                    <div className={`w-6 h-6 rounded-full ${config.bgColor} flex items-center justify-center ${config.color} flex-shrink-0`}>
+                      {config.icon}
+                    </div>
+                    <span className={`font-medium ${config.color}`}>{config.label}</span>
+                    <span className="text-gray-400">•</span>
+                    <span className="text-gray-600">{formatDateTime(entry.createdAt)}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* Signatures Display */}
+        {(signatures.length > 0 || driverSignature) && (
+          <div className="p-3 bg-white rounded-lg border border-gray-200">
+            <div className="flex items-center gap-2 mb-3">
+              <FileText className="w-4 h-4 text-purple-600" />
+              <span className="text-sm font-semibold text-gray-900">Signatures</span>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {/* Patient Signature */}
+              {signatures.map((sig) => (
+                <div key={sig.id} className="bg-purple-50 rounded-lg border border-purple-200 p-2">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-xs font-bold text-purple-700 uppercase">Patient</span>
+                    <span className="text-xs text-green-600 bg-green-100 px-1.5 py-0.5 rounded-full">
+                      {sig.signature_type === 'pickup' ? 'Pickup' : 'Drop-off'}
+                    </span>
+                  </div>
+                  {sig.signer_name && (
+                    <p className="text-xs text-gray-600 mb-1">{sig.signer_name}</p>
+                  )}
+                  <p className="text-xs text-gray-500 mb-2">{formatDateTime(sig.signed_at)}</p>
+                  <div className="bg-white rounded p-2 border border-gray-200">
+                    <img src={sig.signature_data} alt="Patient Signature" className="w-full h-16 object-contain" />
+                  </div>
+                </div>
+              ))}
+
+              {/* Driver Signature */}
+              {driverSignature && (
+                <div className="bg-indigo-50 rounded-lg border border-indigo-200 p-2">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-xs font-bold text-indigo-700 uppercase">Driver</span>
+                    <span className="text-xs text-blue-600 bg-blue-100 px-1.5 py-0.5 rounded-full">On File</span>
+                  </div>
+                  <p className="text-xs text-gray-600 mb-1">{driverName}</p>
+                  <p className="text-xs text-gray-500 mb-2">One-time signature</p>
+                  <div className="bg-white rounded p-2 border border-gray-200">
+                    <img src={driverSignature} alt="Driver Signature" className="w-full h-16 object-contain" />
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </div>
 
-      {/* Change History Title */}
-      <h4 className="text-sm font-bold text-gray-900 flex items-center gap-2 pt-2">
-        <Clock className="w-4 h-4 text-gray-600" />
-        Change History
-      </h4>
+      {/* Detailed Status Timeline - Collapsible */}
+      {statusHistory.length > 0 && (
+        <div>
+          <button
+            onClick={() => setIsStatusExpanded(!isStatusExpanded)}
+            className="w-full flex items-center justify-between pt-2 pb-1"
+          >
+            <h4 className="text-sm font-bold text-gray-900 flex items-center gap-2">
+              <ArrowRight className="w-4 h-4 text-purple-600" />
+              Detailed Status Timeline ({statusHistory.length} changes)
+            </h4>
+            <span className="text-xs text-gray-500">{isStatusExpanded ? 'Hide' : 'Show'}</span>
+          </button>
 
-      {/* Change History */}
-      {history.length === 0 ? (
-        <div className="text-center py-6 text-gray-500">
-          <Clock className="w-8 h-8 mx-auto mb-2 opacity-50" />
-          <p className="text-sm">No changes recorded yet</p>
+          {isStatusExpanded && (
+            <div className="relative mt-2">
+              {statusHistory.map((entry, index) => {
+                const config = STATUS_CONFIG[entry.newStatus] || { label: entry.newStatus?.replace(/_/g, ' '), color: 'text-gray-600', bgColor: 'bg-gray-100', icon: <Clock className="w-3.5 h-3.5" /> };
+                const isLast = index === statusHistory.length - 1;
+                const isFinal = ['completed', 'cancelled', 'no_show'].includes(entry.newStatus);
+
+                return (
+                  <div key={entry.id} className="flex items-start gap-3">
+                    {/* Timeline line + dot */}
+                    <div className="flex flex-col items-center">
+                      <div className={`w-7 h-7 rounded-full ${config.bgColor} flex items-center justify-center ${config.color} flex-shrink-0 ${isFinal ? 'ring-2 ring-offset-1' : ''} ${entry.newStatus === 'completed' ? 'ring-green-300' : entry.newStatus === 'cancelled' ? 'ring-red-300' : entry.newStatus === 'no_show' ? 'ring-gray-300' : ''}`}>
+                        {config.icon}
+                      </div>
+                      {!isLast && <div className="w-0.5 h-8 bg-gray-200 my-0.5" />}
+                    </div>
+
+                    {/* Content */}
+                    <div className={`flex-1 min-w-0 pb-3 ${isLast ? '' : ''}`}>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className={`text-sm font-semibold ${config.color}`}>{config.label}</span>
+                        <span className="text-xs text-gray-400">{formatDateTime(entry.createdAt)}</span>
+                      </div>
+                      {entry.changedByName && (
+                        <p className="text-xs text-gray-500 mt-0.5">
+                          by <span className="font-medium text-gray-700">{entry.changedByName}</span>
+                        </p>
+                      )}
+                      {entry.reason && (
+                        <p className="text-xs text-gray-500 mt-0.5 italic">{entry.reason}</p>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Route Breadcrumbs Map - Replace empty change history */}
+      {locationHistory.length > 0 ? (
+        <div className="bg-gradient-to-r from-teal-50 to-cyan-50 rounded-lg border border-teal-200 p-4">
+          <h4 className="text-sm font-bold text-gray-900 flex items-center gap-2 mb-3">
+            <MapIcon className="w-4 h-4 text-teal-600" />
+            GPS Breadcrumb Trail ({locationHistory.length} points)
+          </h4>
+          <div className="bg-white rounded-lg border border-gray-200 p-3">
+            <div className="mb-3 text-sm text-gray-600">
+              <p className="mb-1">
+                <span className="font-semibold">Start:</span> {formatDateTimeUS(locationHistory[0]?.timestamp)}
+              </p>
+              <p>
+                <span className="font-semibold">End:</span> {formatDateTimeUS(locationHistory[locationHistory.length - 1]?.timestamp)}
+              </p>
+            </div>
+            <TripHistoryMap 
+              locationHistory={locationHistory}
+              pickupAddress={tripData?.pickupLocation}
+              dropoffAddress={tripData?.dropoffLocation}
+              statusHistory={statusHistory.map(s => ({
+                status: s.newStatus,
+                timestamp: s.createdAt,
+              }))}
+            />
+          </div>
         </div>
       ) : (
+        history.length === 0 && (
+          <div className="bg-gray-50 rounded-lg border border-gray-200 p-6 text-center">
+            <MapIcon className="w-10 h-10 mx-auto mb-2 text-gray-400 opacity-50" />
+            <p className="text-sm text-gray-500">No GPS breadcrumbs recorded yet</p>
+            <p className="text-xs text-gray-400 mt-1">Location data will appear here once the driver starts the trip</p>
+          </div>
+        )
+      )}
+
+      {/* Change History - Only show if there are changes */}
+      {history.length > 0 && (
+        <>
+          <h4 className="text-sm font-bold text-gray-900 flex items-center gap-2 pt-2">
+            <Clock className="w-4 h-4 text-gray-600" />
+            Change History
+          </h4>
+        </>
+      )}
+
+      {/* Change History */}
+      {history.length > 0 && (
         <>
           <div className="space-y-2">
             {displayHistory.map((entry) => (

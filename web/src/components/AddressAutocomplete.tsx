@@ -46,6 +46,10 @@ export const AddressAutocomplete: React.FC<AddressAutocompleteProps> = ({
         setIsLoaded(true);
 
         if (inputRef.current && !autocompleteRef.current) {
+          // NOTE: Using legacy Autocomplete API (google.maps.places.Autocomplete)
+          // The new PlaceAutocompleteElement is a web component requiring significant refactor
+          // Legacy API is supported until at least March 2026 with 12 months notice before discontinuation
+          // See: https://developers.google.com/maps/documentation/javascript/places-migration-overview
           const autocomplete = new google.maps.places.Autocomplete(inputRef.current, {
             componentRestrictions: { country: 'us' },
             fields: ['address_components', 'formatted_address', 'geometry', 'place_id'],
@@ -54,15 +58,16 @@ export const AddressAutocomplete: React.FC<AddressAutocompleteProps> = ({
 
           autocomplete.addListener('place_changed', () => {
             const place = autocomplete.getPlace();
-            if (place.formatted_address) {
+            const formattedAddress = place.formatted_address;
+            if (formattedAddress) {
               // Set flag to prevent the next value change from overwriting
               ignoreNextChange.current = true;
 
               // Update local state first
-              setInputValue(place.formatted_address);
+              setInputValue(formattedAddress);
 
               // Then notify parent using ref to get latest callback
-              onChangeRef.current(place.formatted_address);
+              onChangeRef.current(formattedAddress);
 
               // Callback for additional place data
               if (onPlaceSelectedRef.current) {
@@ -71,8 +76,8 @@ export const AddressAutocomplete: React.FC<AddressAutocompleteProps> = ({
 
               // Keep the input value after blur
               setTimeout(() => {
-                if (inputRef.current && inputRef.current.value !== place.formatted_address) {
-                  inputRef.current.value = place.formatted_address;
+                if (inputRef.current && inputRef.current.value !== formattedAddress) {
+                  inputRef.current.value = formattedAddress;
                 }
               }, 100);
             }

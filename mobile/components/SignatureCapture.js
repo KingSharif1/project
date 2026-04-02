@@ -43,7 +43,8 @@ export default function SignatureCapture({
   };
 
   const handleEnd = () => {
-    signatureRef.current?.readSignature();
+    // Just mark that user has drawn something — don't auto-read/save
+    setHasSignature(true);
   };
 
   const handleData = (data) => {
@@ -57,7 +58,7 @@ export default function SignatureCapture({
       handleClear();
       onClose();
     } else {
-      Alert.alert('Invalid Signature', 'Please provide a valid signature.');
+      Alert.alert('Invalid Signature', 'Please draw your signature before saving.');
     }
   };
 

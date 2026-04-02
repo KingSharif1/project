@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import Toast, { ToastType } from './Toast';
 import { ConfirmModal } from './ConfirmModal';
 import { Plus, Edit2, Trash2, Star, MapPin, Phone, Mail, Award, DollarSign, UserCheck, UserX, Search, Download, CheckSquare, TrendingUp, FileText, AlertCircle, Eye, Key, Upload, X as XIcon } from 'lucide-react';
@@ -15,6 +15,7 @@ import { PasswordResetModal } from './PasswordResetModal';
 import { checkDriverDocuments } from '../utils/documentExpiryMonitor';
 import { Driver } from '../types';
 import * as api from '../services/api';
+import { loadGoogleMaps } from '../utils/googleMapsLoader';
 
 // Rate tier structure
 interface RateTier {
@@ -29,6 +30,7 @@ interface RateTier {
 export const DriverManagement: React.FC = () => {
   const { drivers, addDriver, updateDriver, deleteDriver, trips } = useApp();
   const { user } = useAuth();
+  const [driverCities, setDriverCities] = useState<Record<string, string>>({});
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isDocumentMonitorOpen, setIsDocumentMonitorOpen] = useState(false);
   const [isBulkUploadOpen, setIsBulkUploadOpen] = useState(false);
@@ -84,6 +86,57 @@ export const DriverManagement: React.FC = () => {
   };
 
   const [selectedDrivers, setSelectedDrivers] = useState<string[]>([]);
+  const [allVehicles, setAllVehicles] = useState<any[]>([]);
+
+  const fetchAllVehicles = useCallback(async () => {
+    try {
+      const result = await api.getVehicles();
+      if (result.success) setAllVehicles(result.data || []);
+    } catch { setAllVehicles([]); }
+  }, []);
+
+  useEffect(() => {
+    fetchAllVehicles();
+  }, [fetchAllVehicles]);
+
+  // Reverse geocode driver locations to city names
+  useEffect(() => {
+    const geocodeDrivers = async () => {
+      const driversWithCoords = drivers.filter(
+        (d: any) => d.currentLatitude && d.currentLongitude && !driverCities[d.id]
+      );
+      if (driversWithCoords.length === 0) return;
+
+      try {
+        await loadGoogleMaps();
+        const geocoder = new google.maps.Geocoder();
+        const cities: Record<string, string> = {};
+
+        for (const d of driversWithCoords) {
+          try {
+            const result = await geocoder.geocode({
+              location: { lat: d.currentLatitude, lng: d.currentLongitude }
+            });
+            if (result.results?.[0]) {
+              // Find city from address components
+              const components = result.results[0].address_components;
+              const city = components.find((c: any) => c.types.includes('locality'))?.long_name;
+              const state = components.find((c: any) => c.types.includes('administrative_area_level_1'))?.short_name;
+              cities[d.id] = city && state ? `${city}, ${state}` : city || result.results[0].formatted_address.split(',').slice(0, 2).join(',');
+            }
+          } catch {
+            // Skip individual geocode failures
+          }
+        }
+        if (Object.keys(cities).length > 0) {
+          setDriverCities(prev => ({ ...prev, ...cities }));
+        }
+      } catch {
+        // Google Maps not available, keep showing coordinates
+      }
+    };
+    geocodeDrivers();
+  }, [drivers]);
 
   const [formData, setFormData] = useState({
     name: '',
@@ -810,7 +863,7 @@ export const DriverManagement: React.FC = () => {
                 <div className="flex items-center space-x-2 text-sm text-gray-600">
                   <MapPin className="w-4 h-4 text-green-500" />
                   <span>
-                    Location: {(driver.currentLatitude ?? 0).toFixed(4)}, {(driver.currentLongitude ?? 0).toFixed(4)}
+                    {driverCities[driver.id] || `${(driver.currentLatitude ?? 0).toFixed(4)}, ${(driver.currentLongitude ?? 0).toFixed(4)}`}
                   </span>
                 </div>
               </div>
@@ -1231,17 +1284,27 @@ export const DriverManagement: React.FC = () => {
         <DriverProfilePage
           driver={profileDriver}
           trips={trips}
-          vehicles={[]}
+          vehicles={allVehicles}
           onClose={() => setProfileDriver(null)}
           onUpdateDriver={updateDriver}
           onSuspendDriver={(driverId) => updateDriver(driverId, { status: 'off_duty', isActive: false })}
           onReactivateDriver={(driverId) => updateDriver(driverId, { status: 'available', isActive: true })}
-          onSendMessage={(driverId, message) => {
-            console.log('Send message to driver:', driverId, message);
-            // TODO: Implement actual message sending
+          onSendMessage={async (driverId, message) => {
+            try {
+              const driver = drivers.find(d => d.id === driverId);
+              if (driver?.userId) {
+                await api.sendMessage(driver.userId, message);
+                showToast('Message sent successfully', 'success');
+              }
+            } catch (err) {
+              console.error('Failed to send message:', err);
+              showToast('Failed to send message', 'error');
+            }
           }}
-          onAssignVehicle={(driverId, vehicleId) => {
-            updateDriver(driverId, { assignedVehicleId: vehicleId });
+          onAssignVehicle={async (driverId, vehicleId) => {
+            await updateDriver(driverId, { assignedVehicleId: vehicleId });
+            await fetchAllVehicles();
+            showToast(vehicleId ? 'Vehicle assigned successfully' : 'Vehicle unassigned', 'success');
           }}
         />
       )}

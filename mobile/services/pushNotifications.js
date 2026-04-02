@@ -5,24 +5,24 @@ let Notifications, Device, Constants;
 
 // Only import native modules on native platforms
 if (Platform.OS !== 'web') {
-  Notifications = require('expo-notifications');
-  Device = require('expo-device');
-  Constants = require('expo-constants').default;
+  try { Notifications = require('expo-notifications'); } catch {}
+  try { Device = require('expo-device'); } catch {}
+  try { Constants = require('expo-constants').default; } catch {}
 
-  Notifications.setNotificationHandler({
-    handleNotification: async () => ({
-      shouldShowAlert: true,
-      shouldPlaySound: true,
-      shouldSetBadge: true,
-    }),
-  });
+  if (Notifications) {
+    Notifications.setNotificationHandler({
+      handleNotification: async () => ({
+        shouldShowAlert: true,
+        shouldPlaySound: true,
+        shouldSetBadge: true,
+      }),
+    });
+  }
 }
 
 export const pushNotificationService = {
   async registerForPushNotifications() {
-    // Web doesn't support push notifications
-    if (Platform.OS === 'web') {
-      console.log('Push notifications not supported on web');
+    if (Platform.OS === 'web' || !Notifications) {
       return null;
     }
 
@@ -37,7 +37,7 @@ export const pushNotificationService = {
       });
     }
 
-    if (Device.isDevice) {
+    if (!Device || Device.isDevice) {
       const { status: existingStatus } = await Notifications.getPermissionsAsync();
       let finalStatus = existingStatus;
 
@@ -47,27 +47,27 @@ export const pushNotificationService = {
       }
 
       if (finalStatus !== 'granted') {
-        alert('Failed to get push token for push notification!');
         return null;
       }
 
-      token = (
-        await Notifications.getExpoPushTokenAsync({
-          projectId: Constants.expoConfig?.extra?.eas?.projectId,
-        })
-      ).data;
-
-      await AsyncStorage.setItem('pushToken', token);
-    } else {
-      alert('Must use physical device for Push Notifications');
+      try {
+        token = (
+          await Notifications.getExpoPushTokenAsync({
+            projectId: Constants?.expoConfig?.extra?.eas?.projectId,
+          })
+        ).data;
+        await AsyncStorage.setItem('pushToken', token);
+      } catch (e) {
+        console.log('Push token registration failed:', e.message);
+      }
     }
 
     return token;
   },
 
   setupNotificationListeners(onNotificationReceived, onNotificationResponse) {
-    if (Platform.OS === 'web') {
-      return () => {}; // No-op for web
+    if (Platform.OS === 'web' || !Notifications) {
+      return () => {};
     }
 
     const notificationListener = Notifications.addNotificationReceivedListener(
@@ -79,14 +79,15 @@ export const pushNotificationService = {
     );
 
     return () => {
-      Notifications.removeNotificationSubscription(notificationListener);
-      Notifications.removeNotificationSubscription(responseListener);
+      if (notificationListener?.remove) notificationListener.remove();
+      else if (Notifications.removeNotificationSubscription) Notifications.removeNotificationSubscription(notificationListener);
+      if (responseListener?.remove) responseListener.remove();
+      else if (Notifications.removeNotificationSubscription) Notifications.removeNotificationSubscription(responseListener);
     };
   },
 
   async scheduleLocalNotification(title, body, data = {}, delaySeconds = 0) {
-    if (Platform.OS === 'web') {
-      console.log(`[Web Notification] ${title}: ${body}`);
+    if (Platform.OS === 'web' || !Notifications) {
       return;
     }
 
@@ -109,6 +110,14 @@ export const pushNotificationService = {
     );
   },
 
+  async showMessageNotification(senderName, content) {
+    await this.scheduleLocalNotification(
+      `💬 ${senderName}`,
+      content.length > 100 ? content.slice(0, 100) + '...' : content,
+      { type: 'new_message' }
+    );
+  },
+
   async showTripReminderNotification(trip, minutesBefore) {
     await this.scheduleLocalNotification(
       `⏰ Trip in ${minutesBefore} minutes`,
@@ -118,30 +127,30 @@ export const pushNotificationService = {
   },
 
   async cancelNotification(notificationId) {
-    if (Platform.OS !== 'web') {
+    if (Notifications) {
       await Notifications.cancelScheduledNotificationAsync(notificationId);
     }
   },
 
   async cancelAllNotifications() {
-    if (Platform.OS !== 'web') {
+    if (Notifications) {
       await Notifications.cancelAllScheduledNotificationsAsync();
     }
   },
 
   async getBadgeCount() {
-    if (Platform.OS === 'web') return 0;
+    if (!Notifications) return 0;
     return await Notifications.getBadgeCountAsync();
   },
 
   async setBadgeCount(count) {
-    if (Platform.OS !== 'web') {
+    if (Notifications) {
       await Notifications.setBadgeCountAsync(count);
     }
   },
 
   async clearBadge() {
-    if (Platform.OS !== 'web') {
+    if (Notifications) {
       await Notifications.setBadgeCountAsync(0);
     }
   },

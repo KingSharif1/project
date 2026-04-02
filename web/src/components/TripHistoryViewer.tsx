@@ -1,16 +1,18 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Play, Pause, RotateCcw, MapPin, Clock, Navigation, Gauge, Calendar, X } from 'lucide-react';
+import { Play, Pause, RotateCcw, MapPin, Clock, Navigation, Gauge, X } from 'lucide-react';
 import * as api from '../services/api';
-import { loadGoogleMaps } from '../utils/googleMapsLoader';
 import { Trip } from '../types';
+import { TripHistoryMap } from './TripHistoryMap';
 
 interface LocationPoint {
   latitude: number;
   longitude: number;
-  heading: number;
-  speed: number;
-  recorded_at: string;
-  driver_name: string;
+  heading?: number;
+  speed?: number;
+  accuracy?: number;
+  timestamp: string;
+  recorded_at?: string;
+  driver_name?: string;
 }
 
 interface TripRouteData {
@@ -41,10 +43,6 @@ export const TripHistoryViewer: React.FC<TripHistoryViewerProps> = ({ trip, onCl
   const [playbackSpeed, setPlaybackSpeed] = useState(1);
   const [loading, setLoading] = useState(true);
 
-  const mapRef = useRef<HTMLDivElement>(null);
-  const mapInstanceRef = useRef<google.maps.Map | null>(null);
-  const markerRef = useRef<google.maps.Marker | null>(null);
-  const pathLineRef = useRef<google.maps.Polyline | null>(null);
   const playbackIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
@@ -56,11 +54,6 @@ export const TripHistoryViewer: React.FC<TripHistoryViewerProps> = ({ trip, onCl
     };
   }, [trip.id]);
 
-  useEffect(() => {
-    if (locationPoints.length > 0 && mapRef.current) {
-      initializeMap();
-    }
-  }, [locationPoints]);
 
   useEffect(() => {
     if (isPlaying) {
@@ -86,27 +79,35 @@ export const TripHistoryViewer: React.FC<TripHistoryViewerProps> = ({ trip, onCl
     };
   }, [isPlaying, playbackSpeed, locationPoints.length]);
 
-  useEffect(() => {
-    if (locationPoints[currentIndex]) {
-      updateMarkerPosition(locationPoints[currentIndex]);
-    }
-  }, [currentIndex]);
 
   const loadTripHistory = async () => {
     try {
       setLoading(true);
 
-      // Get route summary and location history via backend API
-      const result = await api.getTripRoute(trip.id);
-
-      if (result.data?.route) {
-        setRouteData(result.data.route);
+      // Try route endpoint first (has summary stats)
+      const routeResult = await api.getTripRoute(trip.id);
+      if (routeResult.data?.route) {
+        setRouteData(routeResult.data.route);
       }
 
-      if (result.data?.locations && result.data.locations.length > 0) {
-        setLocationPoints(result.data.locations);
+      // Get location history using the same endpoint as TripHistory
+      const locResult = await api.getTripLocationHistory(trip.id);
+      console.log('TripHistoryViewer: Location history result:', locResult);
+
+      if (locResult.success && locResult.data && locResult.data.length > 0) {
+        // Convert to TripHistoryMap format
+        const formattedPoints = locResult.data.map((loc: any) => ({
+          latitude: Number(loc.latitude),
+          longitude: Number(loc.longitude),
+          timestamp: loc.timestamp,
+          speed: loc.speed,
+          heading: loc.heading,
+          accuracy: loc.accuracy,
+        }));
+        console.log('TripHistoryViewer: Formatted points:', formattedPoints.length);
+        setLocationPoints(formattedPoints);
       } else {
-        console.log('No location history found for this trip');
+        console.log('TripHistoryViewer: No location history found for trip', trip.id);
       }
 
     } catch (error) {
@@ -116,112 +117,7 @@ export const TripHistoryViewer: React.FC<TripHistoryViewerProps> = ({ trip, onCl
     }
   };
 
-  const initializeMap = async () => {
-    if (!mapRef.current || locationPoints.length === 0) return;
 
-    try {
-      await loadGoogleMaps();
-
-      const firstPoint = locationPoints[0];
-      const map = new google.maps.Map(mapRef.current, {
-        center: { lat: Number(firstPoint.latitude), lng: Number(firstPoint.longitude) },
-        zoom: 14,
-        mapTypeControl: true,
-        streetViewControl: false,
-        fullscreenControl: true,
-      });
-
-      mapInstanceRef.current = map;
-
-      // Draw route path
-      const path = locationPoints.map(point => ({
-        lat: Number(point.latitude),
-        lng: Number(point.longitude),
-      }));
-
-      pathLineRef.current = new google.maps.Polyline({
-        path,
-        geodesic: true,
-        strokeColor: '#3b82f6',
-        strokeOpacity: 0.6,
-        strokeWeight: 4,
-        map,
-      });
-
-      // Add start marker
-      new google.maps.Marker({
-        position: { lat: Number(firstPoint.latitude), lng: Number(firstPoint.longitude) },
-        map,
-        icon: {
-          path: google.maps.SymbolPath.CIRCLE,
-          scale: 8,
-          fillColor: '#10b981',
-          fillOpacity: 1,
-          strokeColor: '#fff',
-          strokeWeight: 2,
-        },
-        title: 'Start',
-      });
-
-      // Add end marker
-      const lastPoint = locationPoints[locationPoints.length - 1];
-      new google.maps.Marker({
-        position: { lat: Number(lastPoint.latitude), lng: Number(lastPoint.longitude) },
-        map,
-        icon: {
-          path: google.maps.SymbolPath.CIRCLE,
-          scale: 8,
-          fillColor: '#ef4444',
-          fillOpacity: 1,
-          strokeColor: '#fff',
-          strokeWeight: 2,
-        },
-        title: 'End',
-      });
-
-      // Add current position marker
-      markerRef.current = new google.maps.Marker({
-        position: { lat: Number(firstPoint.latitude), lng: Number(firstPoint.longitude) },
-        map,
-        icon: {
-          path: google.maps.SymbolPath.FORWARD_CLOSED_ARROW,
-          scale: 6,
-          fillColor: '#f59e0b',
-          fillOpacity: 1,
-          strokeColor: '#fff',
-          strokeWeight: 2,
-          rotation: Number(firstPoint.heading) || 0,
-        },
-        title: 'Current Position',
-        zIndex: 1000,
-      });
-
-      // Fit bounds to show entire route
-      const bounds = new google.maps.LatLngBounds();
-      path.forEach(point => bounds.extend(point));
-      map.fitBounds(bounds);
-
-    } catch (error) {
-      console.error('Error initializing map:', error);
-    }
-  };
-
-  const updateMarkerPosition = (point: LocationPoint) => {
-    if (markerRef.current && mapInstanceRef.current) {
-      const position = { lat: Number(point.latitude), lng: Number(point.longitude) };
-      markerRef.current.setPosition(position);
-      markerRef.current.setIcon({
-        path: google.maps.SymbolPath.FORWARD_CLOSED_ARROW,
-        scale: 6,
-        fillColor: '#f59e0b',
-        fillOpacity: 1,
-        strokeColor: '#fff',
-        strokeWeight: 2,
-        rotation: Number(point.heading) || 0,
-      });
-      mapInstanceRef.current.panTo(position);
-    }
-  };
 
   const handlePlayPause = () => {
     setIsPlaying(!isPlaying);
@@ -232,20 +128,13 @@ export const TripHistoryViewer: React.FC<TripHistoryViewerProps> = ({ trip, onCl
     setCurrentIndex(0);
   };
 
-  const formatTime = (dateString: string) => {
+  const formatTime = (dateString?: string) => {
+    if (!dateString) return 'N/A';
     return new Date(dateString).toLocaleTimeString('en-US', {
       hour: 'numeric',
       minute: '2-digit',
       second: '2-digit',
       hour12: true,
-    });
-  };
-
-  const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric',
     });
   };
 
@@ -332,14 +221,20 @@ export const TripHistoryViewer: React.FC<TripHistoryViewerProps> = ({ trip, onCl
 
         {/* Map */}
         <div className="flex-1 relative">
-          <div ref={mapRef} className="w-full h-full min-h-[400px]"></div>
+          <div className="w-full h-full min-h-[400px]">
+            <TripHistoryMap 
+              locationHistory={locationPoints}
+              pickupAddress={routeData?.pickup_address}
+              dropoffAddress={routeData?.dropoff_address}
+            />
+          </div>
 
           {/* Current Info Overlay */}
           <div className="absolute top-4 left-4 bg-white rounded-lg shadow-lg p-4 space-y-2">
             <div className="flex items-center gap-2">
               <Clock size={16} className="text-gray-600" />
               <span className="text-sm font-medium">
-                {currentPoint && formatTime(currentPoint.recorded_at)}
+                {currentPoint && formatTime(currentPoint.timestamp || currentPoint.recorded_at)}
               </span>
             </div>
             <div className="flex items-center gap-2">

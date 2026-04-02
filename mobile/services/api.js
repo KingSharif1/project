@@ -50,6 +50,13 @@ class APIService {
       const data = await response.json();
 
       if (!response.ok) {
+        // Single-device enforcement: another device logged in
+        if (data.code === 'SESSION_REPLACED') {
+          await this.clearToken();
+          const err = new Error(data.error || 'Session expired — logged in on another device.');
+          err.code = 'SESSION_REPLACED';
+          throw err;
+        }
         throw new Error(data.error || data.message || 'API request failed');
       }
 
@@ -131,10 +138,17 @@ export class DriverAPI extends APIService {
     });
   }
 
-  async updateLocation(latitude, longitude, status) {
+  async updateLocation({ latitude, longitude, heading, speed, accuracy, status }) {
     return await this.request('/driver/location', {
       method: 'POST',
-      body: JSON.stringify({ latitude, longitude, status }),
+      body: JSON.stringify({ latitude, longitude, heading, speed, accuracy, status }),
+    });
+  }
+
+  async setOffline() {
+    return await this.request('/driver/location/offline', {
+      method: 'POST',
+      body: JSON.stringify({}),
     });
   }
 
@@ -156,11 +170,200 @@ export class DriverAPI extends APIService {
     });
   }
 
+  async getVehicle() {
+    return await this.request('/driver/vehicle');
+  }
+
+  async changePassword(currentPassword, newPassword) {
+    return await this.request('/driver/change-password', {
+      method: 'POST',
+      body: JSON.stringify({ currentPassword, newPassword }),
+    });
+  }
+
+  async getTripActivity(tripId) {
+    return await this.request(`/driver/trips/${tripId}/activity`);
+  }
+
   async saveSignature(tripId, signatureData) {
     return await this.request(`/driver/trips/${tripId}/signature`, {
       method: 'POST',
       body: JSON.stringify(signatureData),
     });
+  }
+
+  async getDriverId() {
+    try {
+      const profile = await this.getProfile();
+      return profile.profile?.id || profile.id;
+    } catch (error) {
+      console.error('Error getting driver ID:', error);
+      throw new Error('Could not retrieve driver ID');
+    }
+  }
+
+  async saveDriverSignature(signatureData, latitude, longitude) {
+    const driverId = await this.getDriverId();
+    return await this.request(`/drivers/${driverId}/signature`, {
+      method: 'POST',
+      body: JSON.stringify({ signatureData, latitude, longitude }),
+    });
+  }
+
+  async getDriverSignature() {
+    const driverId = await this.getDriverId();
+    return await this.request(`/drivers/${driverId}/signature`);
+  }
+
+  async updateStatus(status) {
+    return await this.request('/driver/status', {
+      method: 'PUT',
+      body: JSON.stringify({ status }),
+    });
+  }
+
+  async getDocuments() {
+    return await this.request('/driver/documents');
+  }
+
+  async submitVehicle(vehicleData) {
+    return await this.request('/driver/vehicle', {
+      method: 'POST',
+      body: JSON.stringify(vehicleData),
+    });
+  }
+
+  async unassignVehicle() {
+    return await this.request('/driver/vehicle/unassign', {
+      method: 'PUT',
+    });
+  }
+
+  async deleteVehicle() {
+    return await this.request('/driver/vehicle', {
+      method: 'DELETE',
+    });
+  }
+
+  async submitDocument(documentType, fileName, fileUrl, fileSize, expiryDate) {
+    return await this.request('/driver/documents', {
+      method: 'POST',
+      body: JSON.stringify({ documentType, fileName, fileUrl, fileSize, expiryDate }),
+    });
+  }
+
+  // Upload a file to driver-documents storage bucket, then create DB record
+  async uploadDriverDocument(documentType, fileUri, fileName, mimeType) {
+    const token = await this.getToken();
+    const storagePath = `${Date.now()}_${fileName}`;
+
+    // Derive server root from mobile base URL (strip /api/mobile)
+    const serverRoot = this.baseURL.replace(/\/api\/mobile$/, '');
+
+    // Step 1: Upload file to storage via multipart
+    const formData = new FormData();
+    formData.append('file', { uri: fileUri, name: fileName, type: mimeType || 'application/octet-stream' });
+    formData.append('path', storagePath);
+
+    const uploadRes = await fetch(`${serverRoot}/api/uploads/driver-documents`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${token}` },
+      body: formData,
+    });
+    const uploadData = await uploadRes.json();
+    if (!uploadRes.ok || !uploadData.success) {
+      throw new Error(uploadData.error || 'File upload failed');
+    }
+
+    // Step 2: Create document_submissions DB record with the storage path
+    return await this.request('/driver/documents', {
+      method: 'POST',
+      body: JSON.stringify({
+        documentType,
+        fileName,
+        fileUrl: uploadData.filePath,
+        fileSize: null,
+        expiryDate: null,
+      }),
+    });
+  }
+
+  // Get a signed URL to view a document via the server endpoint
+  async getDocumentViewUrl(fileUrl, bucket = 'driver-documents') {
+    if (!fileUrl || fileUrl.startsWith('pending://')) return null;
+    const serverRoot = this.baseURL.replace(/\/api\/mobile$/, '');
+    const path = fileUrl.includes(`/${bucket}/`) ? fileUrl.split(`/${bucket}/`)[1] : fileUrl;
+    const res = await fetch(`${serverRoot}/api/uploads/signed-url?bucket=${encodeURIComponent(bucket)}&path=${encodeURIComponent(path)}`, {
+      headers: { 'Authorization': `Bearer ${await this.getToken()}` },
+    });
+    const data = await res.json();
+    if (!res.ok || !data.success || !data.signedUrl) throw new Error('Failed to get document URL');
+    return data.signedUrl;
+  }
+
+  // Upload a vehicle document (file → storage → DB record)
+  async uploadVehicleDocument(documentType, fileUri, fileName, mimeType) {
+    const token = await this.getToken();
+    const storagePath = `${Date.now()}_${fileName}`;
+    const serverRoot = this.baseURL.replace(/\/api\/mobile$/, '');
+
+    // Step 1: Upload file to vehicle-documents storage bucket
+    const formData = new FormData();
+    formData.append('file', { uri: fileUri, name: fileName, type: mimeType || 'application/octet-stream' });
+    formData.append('path', storagePath);
+
+    const uploadRes = await fetch(`${serverRoot}/api/uploads/vehicle-documents`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${token}` },
+      body: formData,
+    });
+    const uploadData = await uploadRes.json();
+    if (!uploadRes.ok || !uploadData.success) {
+      throw new Error(uploadData.error || 'File upload failed');
+    }
+
+    // Step 2: Create document_submissions DB record linked to vehicle
+    return await this.request('/driver/vehicle/documents', {
+      method: 'POST',
+      body: JSON.stringify({
+        documentType,
+        fileName,
+        fileUrl: uploadData.filePath,
+        fileSize: null,
+        expiryDate: null,
+      }),
+    });
+  }
+
+  // ── Messages ──
+
+  async getConversations() {
+    return await this.request('/driver/messages/conversations');
+  }
+
+  async getContacts() {
+    return await this.request('/driver/messages/contacts');
+  }
+
+  async getMessages(otherUserId) {
+    return await this.request(`/driver/messages/${otherUserId}`);
+  }
+
+  async sendMessage(receiverId, content) {
+    return await this.request('/driver/messages', {
+      method: 'POST',
+      body: JSON.stringify({ receiverId, content }),
+    });
+  }
+
+  async markMessagesRead(otherUserId) {
+    return await this.request(`/driver/messages/${otherUserId}/read`, {
+      method: 'POST',
+    });
+  }
+
+  async getUnreadCount() {
+    return await this.request('/driver/messages/unread-count');
   }
 }
 

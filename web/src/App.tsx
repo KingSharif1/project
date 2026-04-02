@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { LayoutDashboard, Car, Users, BarChart3, Menu, X, UserCog, Activity, LogOut, Shield, CircleUser as UserCircle, Truck, DollarSign, Building2, TrendingUp, Settings as SettingsIcon, ChevronDown, ChevronRight, Bell, Calendar as CalendarIcon, MapPin, PanelLeftClose, PanelLeftOpen, Map as MapIcon } from 'lucide-react';
+import { LayoutDashboard, Car, Users, BarChart3, Menu, X, UserCog, Activity, LogOut, Shield, CircleUser as UserCircle, Truck, DollarSign, Building2, TrendingUp, Settings as SettingsIcon, ChevronDown, ChevronRight, Bell, Calendar as CalendarIcon, MapPin, PanelLeftClose, PanelLeftOpen, Map as MapIcon, MessageSquare } from 'lucide-react';
 import { subscribeToNotifications, startNotificationProcessor } from './utils/notificationProcessor';
+import { getUnreadMessageCount } from './services/api';
+import { supabase } from './lib/supabase';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { AppProvider } from './context/AppContext';
 import { ThemeProvider } from './context/ThemeContext';
@@ -25,9 +27,10 @@ import { UpcomingReminders } from './components/UpcomingReminders';
 import { CalendarSchedulingView } from './components/CalendarSchedulingView';
 import { NotificationCenter } from './components/NotificationCenter';
 import { SuperAdminDashboard } from './components/SuperAdminDashboard';
+import { MessageCenter } from './components/MessageCenter';
 
 
-type View = 'dashboard' | 'trips' | 'calendar' | 'tracking' | 'drivers' | 'riders' | 'vehicles' | 'facilities' | 'users' | 'reports' | 'payouts' | 'analytics' | 'activity' | 'hipaa' | 'settings' | 'reminders' | 'superadmin';
+type View = 'dashboard' | 'trips' | 'calendar' | 'tracking' | 'drivers' | 'riders' | 'vehicles' | 'facilities' | 'users' | 'reports' | 'payouts' | 'analytics' | 'activity' | 'hipaa' | 'settings' | 'reminders' | 'superadmin' | 'messages';
 
 const MainApp: React.FC = () => {
   const { 
@@ -49,23 +52,46 @@ const MainApp: React.FC = () => {
   const [reportsExpanded, setReportsExpanded] = useState(false);
   const [systemExpanded, setSystemExpanded] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [unreadMessages, setUnreadMessages] = useState(0);
 
   // Start notification processor when app loads
   useEffect(() => {
-    //console.log('Starting automated notification system...');
-
-    // Start background processor
     const stopProcessor = startNotificationProcessor();
-
-    // Subscribe to real-time notifications
     const unsubscribe = subscribeToNotifications();
-
-    // Cleanup on unmount
     return () => {
       stopProcessor();
       unsubscribe();
     };
   }, []);
+
+  // Track currentView in a ref so the realtime callback always has the latest value
+  const currentViewRef = React.useRef(currentView);
+  useEffect(() => { currentViewRef.current = currentView; }, [currentView]);
+
+  // Unread message count + realtime listener
+  useEffect(() => {
+    if (!user?.id) return;
+    const fetchUnread = () => {
+      // Don't fetch if user is already viewing messages (they get marked read automatically)
+      if (currentViewRef.current === 'messages') {
+        setUnreadMessages(0);
+        return;
+      }
+      getUnreadMessageCount().then(r => {
+        if (r.success) setUnreadMessages(r.unreadCount || 0);
+      }).catch(() => {});
+    };
+    fetchUnread();
+
+    const channel = supabase
+      .channel('web-unread-badge')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, () => fetchUnread())
+      .subscribe((status: string) => {
+        console.log('[Web Realtime Badge] Status:', status);
+      });
+
+    return () => { supabase.removeChannel(channel); };
+  }, [user?.id]);
 
   // Navigation sections with permission-based visibility
   // Admin: Full access to their company
@@ -90,6 +116,7 @@ const MainApp: React.FC = () => {
         { id: 'calendar' as View, name: 'Calendar View', icon: CalendarIcon, visible: true }, // All roles
         { id: 'tracking' as View, name: 'Live Tracking', icon: MapPin, visible: isAdmin || isRegularDispatcher }, // Not for contractor dispatcher
         { id: 'reminders' as View, name: 'Reminders', icon: Bell, visible: true }, // All roles
+        { id: 'messages' as View, name: 'Messages', icon: MessageSquare, visible: isAdmin || isRegularDispatcher }, // Admin + Dispatcher
       ]
     },
     {
@@ -162,6 +189,8 @@ const MainApp: React.FC = () => {
       //   return <HIPAACompliance />;
       case 'users':
         return <UserManagement />;
+      case 'messages':
+        return <MessageCenter />;
       case 'activity':
         return <ActivityTracker />;
       case 'settings':
@@ -265,6 +294,7 @@ const MainApp: React.FC = () => {
                                 onClick={() => {
                                   setCurrentView(item.id);
                                   setSidebarOpen(false);
+                                  if (item.id === 'messages') setUnreadMessages(0);
                                 }}
                                 className={`group flex items-center relative rounded-xl transition-all duration-200 ${sidebarCollapsed ? 'justify-center w-10 h-10 mx-auto' : 'px-3 py-2.5 w-full'
                                   } ${isActive
@@ -281,6 +311,12 @@ const MainApp: React.FC = () => {
 
                                 {!sidebarCollapsed && (
                                   <span className="ml-3 truncate text-sm">{item.name}</span>
+                                )}
+
+                                {item.id === 'messages' && unreadMessages > 0 && (
+                                  <span className={`absolute ${sidebarCollapsed ? '-top-1 -right-1' : 'right-2'} min-w-[18px] h-[18px] flex items-center justify-center rounded-full text-[10px] font-bold text-white bg-red-500`}>
+                                    {unreadMessages > 99 ? '99+' : unreadMessages}
+                                  </span>
                                 )}
 
                                 {sidebarCollapsed && isActive && (

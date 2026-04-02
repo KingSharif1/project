@@ -93,7 +93,7 @@ Storage buckets: driver-documents, vehicle-documents
 - last_name (text, required)
 - date_of_birth (date, nullable)
 - phone (text, nullable)
-- account_number (text, nullable)
+- member_id (text, nullable) — Unique member identifier for the patient
 - service_level (text, nullable) — ambulatory | wheelchair | stretcher
 - notes (text, nullable)
 - clinic_id (uuid, nullable, FK → clinics.id)

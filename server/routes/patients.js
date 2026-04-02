@@ -40,7 +40,7 @@ router.get('/', async (req, res) => {
       fullName: `${p.first_name || ''} ${p.last_name || ''}`.trim(),
       dateOfBirth: p.date_of_birth,
       phone: p.phone,
-      accountNumber: p.account_number,
+      memberId: p.member_id,
       serviceLevel: p.service_level || 'ambulatory',
       notes: p.notes,
       clinicId: p.clinic_id,
@@ -95,7 +95,7 @@ router.post('/', requireRole('superadmin', 'admin', 'dispatcher'), async (req, r
     const lastName = body.lastName || body.last_name;
     const dateOfBirth = body.dateOfBirth || body.date_of_birth;
     const phone = body.phone;
-    const accountNumber = body.accountNumber || body.account_number;
+    const memberId = body.memberId || body.member_id;
     const serviceLevel = body.serviceLevel || body.service_level || body.mobilityType || 'ambulatory';
     const notes = body.notes;
     const clinicId = body.clinicId || body.clinic_id;
@@ -115,7 +115,7 @@ router.post('/', requireRole('superadmin', 'admin', 'dispatcher'), async (req, r
         last_name: lastName,
         date_of_birth: dateOfBirth || null,
         phone: phone || null,
-        account_number: accountNumber || null,
+        member_id: memberId || null,
         service_level: serviceLevel,
         notes: notes || null,
         clinic_id: patientClinicId,
@@ -160,7 +160,7 @@ router.put('/:id', requireRole('superadmin', 'admin', 'dispatcher'), async (req,
     if (updates.lastName !== undefined) patientUpdates.last_name = updates.lastName;
     if (updates.dateOfBirth !== undefined) patientUpdates.date_of_birth = updates.dateOfBirth;
     if (updates.phone !== undefined) patientUpdates.phone = updates.phone;
-    if (updates.accountNumber !== undefined) patientUpdates.account_number = updates.accountNumber;
+    if (updates.memberId !== undefined) patientUpdates.member_id = updates.memberId;
     if (updates.serviceLevel !== undefined) patientUpdates.service_level = updates.serviceLevel;
     if (updates.mobilityType !== undefined) patientUpdates.service_level = updates.mobilityType;
     if (updates.notes !== undefined) patientUpdates.notes = updates.notes;
@@ -255,7 +255,7 @@ router.get('/search/:query', async (req, res) => {
     let dbQuery = supabase
       .from('patients')
       .select('*')
-      .or(`first_name.ilike.%${query}%,last_name.ilike.%${query}%,phone.ilike.%${query}%,account_number.ilike.%${query}%`)
+      .or(`first_name.ilike.%${query}%,last_name.ilike.%${query}%,phone.ilike.%${query}%,member_id.ilike.%${query}%`)
       .limit(20);
 
     // Filter by clinic for non-superadmin users

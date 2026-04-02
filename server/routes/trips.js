@@ -440,6 +440,7 @@ router.put('/:id', requireRole('superadmin', 'admin', 'dispatcher'), async (req,
     if (updates.dropoffInstructions !== undefined) tripUpdates.dropoff_instructions = updates.dropoffInstructions;
 
     // Time fields
+    if (updates.scheduledTime !== undefined) tripUpdates.scheduled_pickup_time = updates.scheduledTime;
     if (updates.scheduledPickupTime !== undefined) tripUpdates.scheduled_pickup_time = updates.scheduledPickupTime;
     if (updates.scheduledDropoffTime !== undefined) tripUpdates.scheduled_dropoff_time = updates.scheduledDropoffTime;
     if (updates.appointmentTime !== undefined) tripUpdates.appointment_time = updates.appointmentTime;
@@ -757,6 +758,101 @@ router.get('/:id/history', async (req, res) => {
 });
 
 /**
+ * GET /api/trips/:id/status-history
+ * Get trip status change timeline (from trip_status_history table)
+ */
+router.get('/:id/status-history', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const { data, error } = await supabase
+      .from('trip_status_history')
+      .select('*')
+      .eq('trip_id', id)
+      .order('changed_at', { ascending: true });
+
+    if (error) {
+      // Table may not exist yet
+      if (error.code === '42P01' || error.code === 'PGRST205' || error.message?.includes('does not exist')) {
+        return res.json({ success: true, data: [] });
+      }
+      console.error('Error fetching trip status history:', error);
+      return res.status(500).json({ error: 'Failed to fetch status history' });
+    }
+
+    // Resolve user names for changed_by
+    const entries = data || [];
+    const userIds = [...new Set(entries.filter(e => e.changed_by).map(e => e.changed_by))];
+    let userMap = {};
+
+    if (userIds.length > 0) {
+      // Try users table first
+      const { data: users } = await supabase
+        .from('users')
+        .select('id, first_name, last_name')
+        .in('id', userIds);
+      if (users) {
+        users.forEach(u => { 
+          userMap[u.id] = `${u.first_name || ''} ${u.last_name || ''}`.trim(); 
+        });
+      }
+
+      // Also check drivers table for driver user_ids
+      const { data: drivers } = await supabase
+        .from('drivers')
+        .select('user_id, first_name, last_name')
+        .in('user_id', userIds);
+      if (drivers) {
+        drivers.forEach(d => {
+          if (!userMap[d.user_id]) {
+            userMap[d.user_id] = `${d.first_name || ''} ${d.last_name || ''}`.trim();
+          }
+        });
+      }
+    }
+
+    const enriched = entries.map(e => ({
+      id: e.id,
+      tripId: e.trip_id,
+      oldStatus: null,  // Schema only has 'status', not old/new
+      newStatus: e.status,
+      changedById: e.changed_by,
+      changedByName: userMap[e.changed_by] || null,
+      reason: e.notes,
+      createdAt: e.changed_at,
+    }));
+
+    res.json({ success: true, data: enriched });
+  } catch (error) {
+    console.error('Error in GET /trips/:id/status-history:', error);
+    res.json({ success: true, data: [] });
+  }
+});
+
+/**
+ * GET /api/trips/:id/location-history
+ * Get trip GPS breadcrumbs from driver_location_history table
+ */
+router.get('/:id/location-history', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const { data, error } = await supabase
+      .from('driver_location_history')
+      .select('latitude, longitude, timestamp, speed, heading')
+      .eq('trip_id', id)
+      .order('timestamp', { ascending: true });
+
+    if (error) throw error;
+
+    res.json({ success: true, data: data || [] });
+  } catch (error) {
+    console.error('Error in GET /trips/:id/location-history:', error);
+    res.json({ success: true, data: [] });
+  }
+});
+
+/**
  * GET /api/trips/:id/creator
  * Get trip creator info (dispatcher_name, created_by user)
  */
@@ -914,6 +1010,289 @@ router.get('/invoice-history', async (req, res) => {
   } catch (error) {
     console.error('Error in GET /trips/invoice-history:', error);
     res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+/**
+ * POST /api/trips/import
+ * Bulk import trips from parsed CSV data
+ * Body: { trips: [...], contractorId?, clinicId? }
+ * Each trip row: { TripId, FirstName, LastName, RiderPhone, DOB, PickupStreet, PickupCity, PickupState, PickupZip,
+ *   DropoffStreet, DropoffCity, DropoffState, DropoffZip, AppointmentTime, PUDate, PUTime, FacilityPhone,
+ *   LOS, TripType, AdditionalPassengers, PatientNotes, Miles, Comments, TripNum }
+ */
+router.post('/import', requireRole('superadmin', 'admin', 'dispatcher'), async (req, res) => {
+  try {
+    const { userId } = req.user;
+    const { trips: rows, contractorId, clinicId } = req.body;
+
+    if (!rows || !Array.isArray(rows) || rows.length === 0) {
+      return res.status(400).json({ error: 'No trip data provided' });
+    }
+
+    const tripClinicId = clinicId || req.user.clinicId;
+    const results = { created: 0, errors: [], skipped: 0 };
+
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      const rowNum = i + 2; // CSV row (1-indexed header + data)
+
+      try {
+        // ── Find or create patient ──
+        let patientId = null;
+        const firstName = (row.FirstName || '').trim();
+        const lastName = (row.LastName || '').trim();
+        const phone = (row.RiderPhone || '').trim();
+        const dob = (row.DOB || '').trim();
+        const memberId = (row.TripId || '').toString().trim();
+
+        if (firstName && lastName) {
+          // Parse DOB from MM/DD/YYYY to YYYY-MM-DD
+          let dobISO = null;
+          if (dob) {
+            const dobParts = dob.split('/');
+            if (dobParts.length === 3) {
+              dobISO = `${dobParts[2]}-${dobParts[0].padStart(2, '0')}-${dobParts[1].padStart(2, '0')}`;
+            }
+          }
+
+          // Try to find existing patient by multiple criteria (member_id, name+DOB, name+phone)
+          let existingPatients = null;
+          
+          // First priority: match by member_id if provided
+          if (memberId) {
+            const { data } = await supabase
+              .from('patients')
+              .select('id')
+              .eq('member_id', memberId)
+              .limit(1);
+            existingPatients = data;
+          }
+          
+          // Second priority: match by name + DOB
+          if (!existingPatients || existingPatients.length === 0) {
+            if (dobISO) {
+              const { data } = await supabase
+                .from('patients')
+                .select('id')
+                .ilike('first_name', firstName)
+                .ilike('last_name', lastName)
+                .eq('date_of_birth', dobISO)
+                .limit(1);
+              existingPatients = data;
+            }
+          }
+          
+          // Third priority: match by name + phone
+          if (!existingPatients || existingPatients.length === 0) {
+            if (phone) {
+              const { data } = await supabase
+                .from('patients')
+                .select('id')
+                .ilike('first_name', firstName)
+                .ilike('last_name', lastName)
+                .eq('phone', phone)
+                .limit(1);
+              existingPatients = data;
+            }
+          }
+
+          if (existingPatients && existingPatients.length > 0) {
+            patientId = existingPatients[0].id;
+          } else {
+            // Create new patient only if no match found
+            const { data: newPatient, error: patientError } = await supabase
+              .from('patients')
+              .insert({
+                first_name: firstName,
+                last_name: lastName,
+                phone: phone || null,
+                date_of_birth: dobISO,
+                member_id: memberId || null,
+                clinic_id: tripClinicId || null,
+                service_level: (row.LOS || 'ambulatory').toLowerCase(),
+              })
+              .select('id')
+              .single();
+
+            if (patientError) {
+              console.error(`Row ${rowNum}: Patient create error:`, patientError.message);
+            } else {
+              patientId = newPatient.id;
+            }
+          }
+        }
+
+        // ── Parse date/time ──
+        const puDate = (row.PUDate || '').trim(); // M/D/YYYY
+        const puTime = (row.PUTime || '').trim(); // H:MM AM/PM
+        const apptTime = (row.AppointmentTime || '').trim();
+
+        // Convert "M/D/YYYY" + "H:MM AM/PM" → ISO datetime
+        const parseDateTime = (dateStr, timeStr) => {
+          if (!dateStr) return null;
+          const dp = dateStr.split('/');
+          if (dp.length !== 3) return null;
+          const isoDate = `${dp[2]}-${dp[0].padStart(2, '0')}-${dp[1].padStart(2, '0')}`;
+          if (!timeStr) return `${isoDate}T00:00:00`;
+
+          // Parse "11:00 AM" style
+          const match = timeStr.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+          if (!match) return `${isoDate}T00:00:00`;
+          let hours = parseInt(match[1]);
+          const mins = match[2];
+          const ampm = match[3].toUpperCase();
+          if (ampm === 'PM' && hours < 12) hours += 12;
+          if (ampm === 'AM' && hours === 12) hours = 0;
+          return `${isoDate}T${String(hours).padStart(2, '0')}:${mins}:00`;
+        };
+
+        const scheduledPickupTime = parseDateTime(puDate, puTime);
+        const appointmentTime = parseDateTime(puDate, apptTime);
+
+        // ── Trip number validation - use TripNum column, NOT TripId ──
+        const baseTripNum = (row.TripNum || row['Trip Num'] || '').toString().trim();
+        
+        if (!baseTripNum) {
+          results.errors.push({ row: rowNum, error: 'Missing Trip Num - trip number is required' });
+          continue;
+        }
+
+        // Check if trip number already exists - REJECT duplicates
+        const { data: existing } = await supabase
+          .from('trips')
+          .select('id')
+          .eq('trip_number', baseTripNum)
+          .limit(1);
+          
+        if (existing && existing.length > 0) {
+          results.errors.push({ row: rowNum, error: `Duplicate trip number: ${baseTripNum} already exists` });
+          continue;
+        }
+        
+        const tripNumber = baseTripNum;
+
+        // ── Build trip data ──
+        const los = (row.LOS || 'ambulatory').toLowerCase();
+        const tripType = (row.TripType || 'oneway').toLowerCase();
+        const isRoundtrip = tripType === 'roundtrip' || tripType === 'round_trip' || tripType === 'round-trip';
+        const miles = parseFloat(row.Miles) || null;
+        const comments = [row.Comments, row.FacilityPhone ? `Facility: ${row.FacilityPhone}` : ''].filter(Boolean).join(' | ');
+        const additionalPassengers = parseInt(row.AdditionalPassengers) || 0;
+
+        const baseTripData = {
+          trip_number: tripNumber,
+          patient_id: patientId,
+          facility_id: contractorId || null,
+          clinic_id: tripClinicId,
+          dispatcher_id: userId,
+          created_by_name: req.user.fullName || null,
+          status: 'scheduled',
+          trip_type: isRoundtrip ? 'round_trip' : 'pickup',
+          priority: 'standard',
+          level_of_service: los,
+          is_return: false,
+          rider: `${firstName} ${lastName}`.trim() || null,
+          phone: phone || null,
+          date: scheduledPickupTime ? scheduledPickupTime.split('T')[0] : null,
+          scheduled_pickup_time: scheduledPickupTime,
+          appointment_time: appointmentTime,
+          pickup_address: row.PickupStreet || '',
+          pickup_city: row.PickupCity || '',
+          pickup_state: row.PickupState || '',
+          pickup_zip: row.PickupZip || '',
+          dropoff_address: row.DropoffStreet || '',
+          dropoff_city: row.DropoffCity || '',
+          dropoff_state: row.DropoffState || '',
+          dropoff_zip: row.DropoffZip || '',
+          mileage: miles,
+          notes: comments || null,
+          special_instructions: row.PatientNotes || null,
+        };
+
+        // ── Create A-leg trip ──
+        const { data: tripA, error: tripAError } = await supabase
+          .from('trips')
+          .insert(baseTripData)
+          .select('id')
+          .single();
+
+        if (tripAError) {
+          results.errors.push({ row: rowNum, error: tripAError.message });
+          continue;
+        }
+        results.created++;
+
+        // ── Create B-leg (return) if roundtrip ──
+        if (isRoundtrip) {
+          const returnTripNumber = `${tripNumber}B`;
+
+          // Check B-leg trip number - REJECT if duplicate exists
+          const { data: existingB } = await supabase
+            .from('trips')
+            .select('id')
+            .eq('trip_number', returnTripNumber)
+            .limit(1);
+          if (existingB && existingB.length > 0) {
+            results.errors.push({ row: rowNum, error: `Duplicate return trip number: ${returnTripNumber} already exists` });
+            continue;
+          }
+          
+          const returnNum = returnTripNumber;
+
+          const { error: tripBError } = await supabase
+            .from('trips')
+            .insert({
+              ...baseTripData,
+              trip_number: returnNum,
+              trip_type: 'round_trip',
+              is_return: true,
+              round_trip_id: tripA.id,
+              // Flip pickup ↔ dropoff for return leg
+              pickup_address: row.DropoffStreet || '',
+              pickup_city: row.DropoffCity || '',
+              pickup_state: row.DropoffState || '',
+              pickup_zip: row.DropoffZip || '',
+              dropoff_address: row.PickupStreet || '',
+              dropoff_city: row.PickupCity || '',
+              dropoff_state: row.PickupState || '',
+              dropoff_zip: row.PickupZip || '',
+              // Return appointment time is null (use will-call or separate scheduling)
+              appointment_time: null,
+              scheduled_pickup_time: appointmentTime || scheduledPickupTime, // Return after appointment
+            });
+
+          if (tripBError) {
+            results.errors.push({ row: rowNum, error: `Return leg: ${tripBError.message}` });
+          } else {
+            results.created++;
+          }
+        }
+      } catch (rowError) {
+        results.errors.push({ row: rowNum, error: rowError.message });
+      }
+    }
+
+    // Log audit
+    try {
+      await supabase.from('activity_log').insert({
+        user_id: userId,
+        action: 'import_trips',
+        entity_type: 'trip',
+        details: { importedCount: results.created, errorCount: results.errors.length, totalRows: rows.length },
+      });
+    } catch (_) {}
+
+    res.json({
+      success: true,
+      message: `Imported ${results.created} trip(s) from ${rows.length} row(s).`,
+      created: results.created,
+      errors: results.errors,
+      skipped: results.skipped,
+    });
+  } catch (error) {
+    console.error('Error in POST /trips/import:', error);
+    res.status(500).json({ error: 'Failed to import trips: ' + error.message });
   }
 });
 

@@ -1,12 +1,13 @@
 import React, { useMemo, useState } from 'react';
-import { BarChart3, Download, FileSpreadsheet, FileText, TrendingUp, Clock, DollarSign, Star, Calendar, Building2, Settings } from 'lucide-react';
+import { BarChart3, FileSpreadsheet, FileText, TrendingUp, Clock, DollarSign, Star, Calendar, Building2, Settings } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { useAuth } from '../context/AuthContext';
 import { exportToPDF, exportToCSV } from '../utils/exportUtils';
 import { CustomReportBuilder } from './CustomReportBuilder';
+import { calculateContractorRate } from '../utils/rateCalculator';
 
 export const Reports: React.FC = () => {
-  const { trips, drivers, clinics } = useApp();
+  const { trips, drivers, clinics, contractors } = useApp();
   const { user, isAdmin } = useAuth();
   const [timeRange, setTimeRange] = useState<'today' | 'week' | 'month' | 'all' | 'custom'>('all');
   const [dateRange, setDateRange] = useState<{ start: string; end: string }>({ start: '', end: '' });
@@ -21,7 +22,7 @@ export const Reports: React.FC = () => {
     const monthAgo = new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000);
 
     const filteredTrips = trips.filter(trip => {
-      if (selectedClinics.length > 0 && !selectedClinics.includes(trip.clinicId)) {
+      if (selectedClinics.length > 0 && !selectedClinics.includes(trip.clinicId || '')) {
         return false;
       }
 
@@ -45,8 +46,25 @@ export const Reports: React.FC = () => {
       }
     });
 
+    // Helper: get fare for a trip, dynamically calculating from contractor rate if fare is 0
+    const getTripFare = (trip: any): number => {
+      if (trip.fare && trip.fare > 0) return trip.fare;
+      // Dynamically calculate from contractor rates
+      const rateSource = (trip.contractorId ? contractors.find((c: any) => c.id === trip.contractorId) : null)
+        || (trip.clinicId ? clinics.find((c: any) => c.id === trip.clinicId) : null);
+      if (rateSource && (trip.distance || trip.distanceMiles)) {
+        const calc = calculateContractorRate(
+          (trip.serviceLevel || 'ambulatory') as any,
+          trip.distance || trip.distanceMiles || 0,
+          rateSource as any
+        );
+        return calc.rate;
+      }
+      return 0;
+    };
+
     const completedTrips = filteredTrips.filter(trip => trip.status === 'completed');
-    const totalRevenue = completedTrips.reduce((sum, trip) => sum + (trip.fare || 0), 0);
+    const totalRevenue = completedTrips.reduce((sum, trip) => sum + getTripFare(trip), 0);
     const totalDistance = completedTrips.reduce((sum, trip) => sum + (trip.distance || 0), 0);
     const avgFare = completedTrips.length > 0 ? totalRevenue / completedTrips.length : 0;
     const avgDistance = completedTrips.length > 0 ? totalDistance / completedTrips.length : 0;
@@ -62,15 +80,15 @@ export const Reports: React.FC = () => {
 
     const cancelledRevenue = filteredTrips
       .filter(t => t.status === 'cancelled')
-      .reduce((sum, trip) => sum + (trip.fare || 0), 0);
+      .reduce((sum, trip) => sum + getTripFare(trip), 0);
 
     const noShowRevenue = filteredTrips
       .filter(t => t.status === 'no-show')
-      .reduce((sum, trip) => sum + (trip.fare || 0), 0);
+      .reduce((sum, trip) => sum + getTripFare(trip), 0);
 
     const driverStats = drivers.map(driver => {
       const driverTrips = completedTrips.filter(trip => trip.driverId === driver.id);
-      const revenue = driverTrips.reduce((sum, trip) => sum + (trip.fare || 0), 0);
+      const revenue = driverTrips.reduce((sum, trip) => sum + getTripFare(trip), 0);
       return {
         id: driver.id,
         name: driver.name,
@@ -110,7 +128,7 @@ export const Reports: React.FC = () => {
     const clinicName = user?.clinicId ? clinics.find(c => c.id === user.clinicId)?.name : undefined;
 
     const filteredTrips = trips.filter(trip => {
-      if (selectedClinics.length > 0 && !selectedClinics.includes(trip.clinicId)) {
+      if (selectedClinics.length > 0 && !selectedClinics.includes(trip.clinicId || '')) {
         return false;
       }
 
@@ -145,7 +163,7 @@ export const Reports: React.FC = () => {
 
   const handleExportCSV = () => {
     const filteredTrips = trips.filter(trip => {
-      if (selectedClinics.length > 0 && !selectedClinics.includes(trip.clinicId)) {
+      if (selectedClinics.length > 0 && !selectedClinics.includes(trip.clinicId || '')) {
         return false;
       }
 
@@ -447,7 +465,7 @@ export const Reports: React.FC = () => {
             </div>
           </div>
 
-          <div className="bg-white rounded-lg p-5 border border-blue-200 shadow-sm border-2">
+          <div className="bg-white rounded-lg p-5 border-2 border-blue-200 shadow-sm">
             <div className="flex items-center justify-between mb-3">
               <div className="p-2 bg-blue-100 rounded-lg">
                 <DollarSign className="w-5 h-5 text-blue-600" />

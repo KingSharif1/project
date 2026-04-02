@@ -13,6 +13,7 @@ import { PatientHistory } from './PatientHistory';
 import { DispatchSuggestions } from './DispatchSuggestions';
 import { ManualCompletionModal } from './ManualCompletionModal';
 import { TripHistory } from './TripHistory';
+import { TripImport } from './TripImport';
 import { RiderAutocomplete } from './RiderAutocomplete';
 import Toast, { ToastType } from './Toast';
 import { Trip, Contractor } from '../types';
@@ -23,7 +24,7 @@ import { calculateDistance } from '../utils/distanceCalculator';
 import * as XLSX from 'xlsx';
 import { generateTripNumber, getBaseTripNumber } from '../utils/tripNumberGenerator';
 import { isSameDay, isToday, isTomorrow, isYesterday, getStartOfDay, getEndOfDay } from '../utils/timezoneUtils';
-import { calculateTripRates } from '../utils/rateCalculator';
+import { calculateTripRates, calculateContractorRate } from '../utils/rateCalculator';
 import { formatDateUS, formatDateTimeUS, formatTimeUS } from '../utils/dateFormatter';
 import { sendAppointmentReminder } from '../utils/tripEnhancements';
 
@@ -99,7 +100,7 @@ export const TripManagement: React.FC = () => {
   const [selectedTrips, setSelectedTrips] = useState<Set<string>>(new Set());
 
   // Safety check: ensure selectedTrips is always a Set
-  const safeSelectedTrips = selectedTrips instanceof Set ? selectedTrips : new Set();
+  const safeSelectedTrips: Set<string> = selectedTrips instanceof Set ? selectedTrips : new Set<string>();
   const [filterStatus, setFilterStatus] = useState<string>('all');
   const [filterDate, setFilterDate] = useState<string>('today');
   const [filterDateRange, setFilterDateRange] = useState<{ start: string; end: string } | null>(null);
@@ -251,7 +252,7 @@ export const TripManagement: React.FC = () => {
   const [patientForm, setPatientForm] = useState({
     company: '', // Helper for clinicId
     dateOfBirth: '',
-    accountNumber: '',
+    memberId: '',
     defaultLevelOfService: '', // Map to serviceLevel
   });
 
@@ -360,7 +361,8 @@ export const TripManagement: React.FC = () => {
         try {
           const driver = drivers.find(d => d.id === formData.driverId);
           const contractorId = formData.contractorId || user?.clinicId;
-          const clinic = clinics.find(c => c.id === contractorId);
+          // Look up in contractors first (Client Account), then fall back to clinics
+          const rateSource = contractors.find(c => c.id === contractorId) || clinics.find(c => c.id === contractorId);
 
           //console.log('Recalculating rates - Clinic:', clinic?.name, 'Service Level:', formData.serviceLevel);
 
@@ -372,7 +374,7 @@ export const TripManagement: React.FC = () => {
               status: 'pending'
             },
             driver,
-            clinic
+            rateSource
           );
 
           //console.log('Calculated rates:', rates);
@@ -511,12 +513,35 @@ export const TripManagement: React.FC = () => {
     fetchSignatures();
   }, [trips]);
 
+  // Helper: convert a date string to local datetime-local format (YYYY-MM-DDTHH:MM)
+  // This avoids the UTC shift that .toISOString().slice(0,16) causes
+  const toLocalDateTimeStr = (dateStr: string | undefined | null): string => {
+    if (!dateStr) return '';
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return '';
+    const pad = (n: number) => n.toString().padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  };
+
+  const toLocalDateStr = (dateStr: string | undefined | null): string => {
+    if (!dateStr) return '';
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return '';
+    const pad = (n: number) => n.toString().padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  };
+
+  const toLocalTimeStr = (dateStr: string | undefined | null): string => {
+    if (!dateStr) return '';
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return '';
+    const pad = (n: number) => n.toString().padStart(2, '0');
+    return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  };
+
   const handleOpenModal = (trip?: Trip) => {
     if (trip) {
       setEditingTrip(trip);
-      const scheduledDateTime = new Date(trip.scheduledTime);
-      const scheduledDateStr = scheduledDateTime.toISOString().slice(0, 10);
-      const scheduledTimeStr = scheduledDateTime.toTimeString().slice(0, 5);
 
       setFormData({
         firstName: trip.firstName || '',
@@ -526,12 +551,12 @@ export const TripManagement: React.FC = () => {
         customerEmail: trip.customerEmail || '',
         pickupLocation: trip.pickupLocation,
         dropoffLocation: trip.dropoffLocation,
-        scheduledTime: new Date(trip.scheduledTime).toISOString().slice(0, 16),
-        scheduledDate: scheduledDateStr,
-        scheduledPickupTime: scheduledTimeStr,
-        appointmentTime: trip.appointmentTime ? new Date(trip.appointmentTime).toISOString().slice(0, 16) : '',
-        actualPickupTime: trip.actualPickupTime ? new Date(trip.actualPickupTime).toISOString().slice(0, 16) : '',
-        actualDropoffTime: trip.actualDropoffTime ? new Date(trip.actualDropoffTime).toISOString().slice(0, 16) : '',
+        scheduledTime: toLocalDateTimeStr(trip.scheduledTime),
+        scheduledDate: toLocalDateStr(trip.scheduledTime),
+        scheduledPickupTime: toLocalTimeStr(trip.scheduledTime),
+        appointmentTime: toLocalDateTimeStr(trip.appointmentTime),
+        actualPickupTime: toLocalDateTimeStr(trip.actualPickupTime),
+        actualDropoffTime: toLocalDateTimeStr(trip.actualDropoffTime),
         distance: trip.distance.toString(),
         notes: trip.notes || '',
         clinicNote: trip.clinicNote || '',
@@ -542,10 +567,12 @@ export const TripManagement: React.FC = () => {
         returnPickupLocation: trip.returnPickupLocation || '',
         returnDropoffLocation: trip.returnDropoffLocation || '',
         willCall: trip.willCall || false,
-        contractorId: trip.clinicId || '',
+        contractorId: trip.contractorId || '',
         classification: trip.classification || '',
         driverId: trip.driverId || '',
         driverPayout: trip.driverPayout?.toString() || '',
+        levelOfAssistance: trip.levelOfAssistance || '',
+        patientId: trip.patientId || '',
       });
     } else {
       resetForm();
@@ -597,7 +624,7 @@ export const TripManagement: React.FC = () => {
       // Generate base trip number using improved generator
       const baseTripNumber = editingTrip?.tripNumber
         ? getBaseTripNumber(editingTrip.tripNumber)
-        : getBaseTripNumber(generateTripNumber(false, undefined, existingTripNumbers));
+        : getBaseTripNumber(generateTripNumber(false));
 
       // Rider Creation Logic
       let finalPatientId = formData.patientId;
@@ -606,15 +633,15 @@ export const TripManagement: React.FC = () => {
         try {
           // Create new patient record
           const patientResult = await api.createPatient({
-              firstName: formData.firstName,
-              lastName: formData.lastName,
-              phone: formData.customerPhone,
-              dateOfBirth: patientForm.dateOfBirth || null,
-              accountNumber: patientForm.accountNumber || null,
-              serviceLevel: patientForm.defaultLevelOfService || 'ambulatory',
-              notes: formData.notes || null,
-              clinicId: patientForm.company || (isAdmin ? null : user?.clinicId),
-            });
+            firstName: formData.firstName,
+            lastName: formData.lastName,
+            phone: formData.customerPhone,
+            dateOfBirth: patientForm.dateOfBirth || null,
+            memberId: patientForm.memberId || null,
+            serviceLevel: patientForm.defaultLevelOfService || 'ambulatory',
+            notes: formData.notes || null,
+            clinicId: patientForm.company || (isAdmin ? null : user?.clinicId),
+          });
 
           if (!patientResult.success || !patientResult.data) {
             console.error('Error creating new patient');
@@ -630,6 +657,21 @@ export const TripManagement: React.FC = () => {
         }
       }
 
+      // Calculate fare from contractor rate so Reports/Analytics show real revenue
+      let calculatedFare = 0;
+      const tripDistance = parseFloat(formData.distance) || 0;
+      if (tripDistance > 0 && formData.contractorId) {
+        const rateSource = contractors.find(c => c.id === formData.contractorId) || clinics.find(c => c.id === formData.contractorId);
+        if (rateSource) {
+          const rateCalc = calculateContractorRate(
+            (formData.serviceLevel || 'ambulatory') as any,
+            tripDistance,
+            rateSource
+          );
+          calculatedFare = rateCalc.rate;
+        }
+      }
+
       const baseTripData = {
         firstName: formData.firstName,
         lastName: formData.lastName,
@@ -638,12 +680,12 @@ export const TripManagement: React.FC = () => {
         customerEmail: formData.customerEmail,
         patientId: finalPatientId || undefined, // Link to patient
 
-        fare: 0, // Default to 0 as field is removed
-        distance: parseFloat(formData.distance) || 0,
+        fare: calculatedFare,
+        distance: tripDistance,
         notes: formData.notes,
         clinicNote: formData.clinicNote,
         classification: formData.classification,
-        status: 'pending' as const,
+        status: editingTrip ? (editingTrip.status || 'pending') : ('pending' as const),
         tripType: formData.tripType,
         journeyType: formData.journeyType,
         serviceLevel: formData.serviceLevel,
@@ -673,10 +715,10 @@ export const TripManagement: React.FC = () => {
           tripNumber: outboundTripNumber,
           pickupLocation: formData.pickupLocation,
           dropoffLocation: formData.dropoffLocation,
-          scheduledTime: (editingTrip.isReturnTrip && formData.willCall) ? '2000-01-01T00:00:00.000Z' : new Date(formData.scheduledTime).toISOString(),
-          appointmentTime: formData.appointmentTime ? new Date(formData.appointmentTime).toISOString() : undefined,
-          actualPickupTime: formData.actualPickupTime ? new Date(formData.actualPickupTime).toISOString() : undefined,
-          actualDropoffTime: formData.actualDropoffTime ? new Date(formData.actualDropoffTime).toISOString() : undefined,
+          scheduledTime: (editingTrip.isReturnTrip && formData.willCall) ? '2000-01-01T00:00:00.000Z' : formData.scheduledTime,
+          appointmentTime: formData.appointmentTime || undefined,
+          actualPickupTime: formData.actualPickupTime || undefined,
+          actualDropoffTime: formData.actualDropoffTime || undefined,
           willCall: editingTrip.isReturnTrip ? formData.willCall : false,
           driverPayout: parseFloat(formData.driverPayout) || 0,
           distance: mileageBreakdown?.leg1 || parseFloat(formData.distance) || 0,
@@ -688,23 +730,19 @@ export const TripManagement: React.FC = () => {
         if (wasOneWay && isNowRoundtrip) {
           const returnTripNumber = `${baseTripNumber}B`;
 
-          // For Will Call, use the same date as outbound but with 00:00:00 time
-          const returnScheduledTime = formData.willCall
-            ? (() => {
-              const outboundDate = new Date(formData.scheduledTime);
-              const willCallDate = new Date(outboundDate.getFullYear(), outboundDate.getMonth(), outboundDate.getDate(), 0, 0, 0);
-              return willCallDate.toISOString();
-            })()
+          // For Will Call, use the same date as outbound but with 00:00 time
+          const convertReturnTime = formData.willCall
+            ? `${formData.scheduledTime.slice(0, 10)}T00:00`
             : (formData.returnTime
-              ? new Date(formData.returnTime).toISOString()
-              : new Date(new Date(formData.scheduledTime).getTime() + 2 * 60 * 60 * 1000).toISOString());
+              ? formData.returnTime
+              : toLocalDateTimeStr(new Date(new Date(formData.scheduledTime).getTime() + 2 * 60 * 60 * 1000).toString()));
 
           const returnTrip = {
             ...baseTripData,
             tripNumber: returnTripNumber,
             pickupLocation: formData.returnPickupLocation || formData.dropoffLocation,
             dropoffLocation: formData.returnDropoffLocation || formData.pickupLocation,
-            scheduledTime: returnScheduledTime,
+            scheduledTime: convertReturnTime,
             willCall: formData.willCall,
             driverPayout: parseFloat(formData.driverPayout) || 0,
             appointmentTime: undefined,
@@ -732,10 +770,10 @@ export const TripManagement: React.FC = () => {
             tripNumber: outboundTripNumber,
             pickupLocation: formData.pickupLocation,
             dropoffLocation: formData.dropoffLocation,
-            scheduledTime: new Date(formData.scheduledTime).toISOString(),
+            scheduledTime: formData.scheduledTime,
             willCall: false,
             driverPayout: parseFloat(formData.driverPayout) || 0,
-            appointmentTime: formData.appointmentTime ? new Date(formData.appointmentTime).toISOString() : undefined,
+            appointmentTime: formData.appointmentTime || undefined,
             notes: `${formData.notes ? formData.notes + ' | ' : ''}Outbound leg of roundtrip`,
             distance: mileageBreakdown?.leg1 || parseFloat(formData.distance) || 0,
             leg1Miles: mileageBreakdown?.leg1 || 0,
@@ -743,20 +781,16 @@ export const TripManagement: React.FC = () => {
           };
 
           //console.log('Creating outbound trip:', outboundTrip);
-          const outboundResult = await addTrip(outboundTrip);
+          await addTrip(outboundTrip);
           //console.log('Outbound trip created:', outboundResult);
 
           // Always create return trip for roundtrip, even if Will Call
-          // For Will Call returns, use the same date as outbound trip but with 00:00:00 time
+          // For Will Call returns, use the same date as outbound trip but with 00:00 time
           const returnScheduledTime = formData.willCall
-            ? (() => {
-              const outboundDate = new Date(formData.scheduledTime);
-              const willCallDate = new Date(outboundDate.getFullYear(), outboundDate.getMonth(), outboundDate.getDate(), 0, 0, 0);
-              return willCallDate.toISOString();
-            })()
+            ? `${formData.scheduledTime.slice(0, 10)}T00:00`
             : (formData.returnTime
-              ? new Date(formData.returnTime).toISOString()
-              : new Date(new Date(formData.scheduledTime).getTime() + 2 * 60 * 60 * 1000).toISOString());
+              ? formData.returnTime
+              : toLocalDateTimeStr(new Date(new Date(formData.scheduledTime).getTime() + 2 * 60 * 60 * 1000).toString()));
 
           const returnTrip = {
             ...baseTripData,
@@ -777,7 +811,7 @@ export const TripManagement: React.FC = () => {
           };
 
           //console.log('Creating return trip:', returnTrip);
-          const returnResult = await addTrip(returnTrip);
+          await addTrip(returnTrip);
           //console.log('Return trip created:', returnResult);
 
           // Refresh data to show both trips
@@ -792,13 +826,13 @@ export const TripManagement: React.FC = () => {
               stopNumber: 1,
               pickupAddress: formData.pickupLocation,
               dropoffAddress: formData.dropoffLocation,
-              scheduledTime: new Date(formData.scheduledTime).toISOString(),
+              scheduledTime: formData.scheduledTime,
             },
             ...additionalStops.map((stop, index) => ({
               stopNumber: index + 2,
               pickupAddress: stop.pickupLocation,
               dropoffAddress: stop.dropoffLocation,
-              scheduledTime: new Date(formData.scheduledTime).toISOString(),
+              scheduledTime: formData.scheduledTime,
             }))
           ];
 
@@ -807,8 +841,8 @@ export const TripManagement: React.FC = () => {
             tripNumber: baseTripNumber,
             pickupLocation: formData.pickupLocation,
             dropoffLocation: formData.dropoffLocation,
-            scheduledTime: new Date(formData.scheduledTime).toISOString(),
-            appointmentTime: formData.appointmentTime ? new Date(formData.appointmentTime).toISOString() : undefined,
+            scheduledTime: formData.scheduledTime,
+            appointmentTime: formData.appointmentTime || undefined,
             notes: `${formData.notes ? formData.notes + ' | ' : ''}Multi-stop trip with ${additionalStops.length + 1} stops`,
             stops: stopsArray, // JSONB array of stops
           };
@@ -843,12 +877,12 @@ export const TripManagement: React.FC = () => {
                 tripNumber: `${baseTripNumber}-R${tripCounter}`,
                 pickupLocation: formData.pickupLocation,
                 dropoffLocation: formData.dropoffLocation,
-                scheduledTime: tripDate.toISOString(),
+                scheduledTime: toLocalDateTimeStr(tripDate.toString()),
                 willCall: false,
                 driverPayout: parseFloat(formData.driverPayout) || 0,
-                appointmentTime: formData.appointmentTime ? new Date(formData.appointmentTime).toISOString() : undefined,
-                actualPickupTime: formData.actualPickupTime ? new Date(formData.actualPickupTime).toISOString() : undefined,
-                actualDropoffTime: formData.actualDropoffTime ? new Date(formData.actualDropoffTime).toISOString() : undefined,
+                appointmentTime: formData.appointmentTime || undefined,
+                actualPickupTime: formData.actualPickupTime || undefined,
+                actualDropoffTime: formData.actualDropoffTime || undefined,
                 notes: `${formData.notes ? formData.notes + ' | ' : ''}Recurring trip ${tripCounter}`,
               };
 
@@ -864,12 +898,12 @@ export const TripManagement: React.FC = () => {
             tripNumber: `${baseTripNumber}A`,
             pickupLocation: formData.pickupLocation,
             dropoffLocation: formData.dropoffLocation,
-            scheduledTime: new Date(formData.scheduledTime).toISOString(),
+            scheduledTime: formData.scheduledTime,
             willCall: false,
             driverPayout: parseFloat(formData.driverPayout) || 0,
-            appointmentTime: formData.appointmentTime ? new Date(formData.appointmentTime).toISOString() : undefined,
-            actualPickupTime: formData.actualPickupTime ? new Date(formData.actualPickupTime).toISOString() : undefined,
-            actualDropoffTime: formData.actualDropoffTime ? new Date(formData.actualDropoffTime).toISOString() : undefined,
+            appointmentTime: formData.appointmentTime || undefined,
+            actualPickupTime: formData.actualPickupTime || undefined,
+            actualDropoffTime: formData.actualDropoffTime || undefined,
           };
           await addTrip(singleTrip);
         }
@@ -1003,6 +1037,52 @@ export const TripManagement: React.FC = () => {
     }
   };
 
+  const handleBulkDelete = async () => {
+    if (safeSelectedTrips.size === 0) return;
+
+    const tripNumbers = Array.from(safeSelectedTrips)
+      .map(id => trips.find(t => t.id === id)?.tripNumber)
+      .filter(Boolean)
+      .join(', ');
+
+    const confirmMessage = `⚠️ WARNING: This will permanently delete ${safeSelectedTrips.size} trip(s).\n\nTrip Numbers: ${tripNumbers}\n\nThis action CANNOT be undone. Are you absolutely sure?`;
+    
+    if (!confirm(confirmMessage)) return;
+
+    // Double confirmation for safety
+    if (!confirm('Final confirmation: Delete these trips permanently?')) return;
+
+    try {
+      let successCount = 0;
+      let errorCount = 0;
+
+      for (const tripId of Array.from(safeSelectedTrips)) {
+        try {
+          await api.deleteTrip(tripId);
+          successCount++;
+        } catch (error) {
+          console.error(`Failed to delete trip ${tripId}:`, error);
+          errorCount++;
+        }
+      }
+
+      if (successCount > 0) {
+        showToast(`${successCount} trip(s) deleted successfully`, 'success');
+        await refreshData();
+      }
+
+      if (errorCount > 0) {
+        showToast(`Failed to delete ${errorCount} trip(s)`, 'error');
+      }
+
+      setSelectedTrips(new Set());
+      setShowBulkActions(false);
+    } catch (error) {
+      console.error('Error deleting trips:', error);
+      showToast('Failed to delete trips', 'error');
+    }
+  };
+
   const getDriverDailyStats = (driverId: string) => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -1036,9 +1116,6 @@ export const TripManagement: React.FC = () => {
 
   const handleDuplicateTrip = (trip: Trip) => {
     setEditingTrip(null);
-    const scheduledDateTime = new Date(trip.scheduledTime);
-    const scheduledDateStr = scheduledDateTime.toISOString().slice(0, 10);
-    const scheduledTimeStr = scheduledDateTime.toTimeString().slice(0, 5);
 
     setFormData({
       firstName: trip.firstName || '',
@@ -1050,7 +1127,7 @@ export const TripManagement: React.FC = () => {
       dropoffLocation: trip.dropoffLocation,
       scheduledTime: '',
       scheduledDate: '',
-      scheduledPickupTime: scheduledTimeStr,
+      scheduledPickupTime: toLocalTimeStr(trip.scheduledTime),
       appointmentTime: '',
       actualPickupTime: '',
       actualDropoffTime: '',
@@ -1064,7 +1141,7 @@ export const TripManagement: React.FC = () => {
       returnPickupLocation: '',
       returnDropoffLocation: '',
       willCall: false,
-      contractorId: trip.clinicId || '',
+      contractorId: trip.contractorId || '',
       classification: trip.classification || '',
       driverId: '',
       driverPayout: '',
@@ -1258,8 +1335,6 @@ export const TripManagement: React.FC = () => {
       // Clear timestamps only if explicitly needed
       actualPickupTime: undefined,
       actualDropoffTime: undefined,
-      // Clear tracking state
-      trackingLinkId: undefined,
       // Regenerate charges based on current rates
       fare: 0, // Will be recalculated
       driverPayout: 0, // Will be recalculated
@@ -1506,9 +1581,9 @@ export const TripManagement: React.FC = () => {
           if (driverTotalTrips > 100) score += 10;
           else if (driverTotalTrips > 50) score += 5;
 
-          if (trip.serviceLevel === 'wheelchair' && driver.vehicleType === 'van') {
+          if (trip.serviceLevel === 'wheelchair' && driver.assignedVehicle?.toLowerCase().includes('van')) {
             score += 25;
-          } else if (trip.serviceLevel === 'wheelchair' && driver.vehicleType !== 'van') {
+          } else if (trip.serviceLevel === 'wheelchair' && driver.assignedVehicle && !driver.assignedVehicle.toLowerCase().includes('van')) {
             score -= 50;
           }
 
@@ -1548,7 +1623,7 @@ export const TripManagement: React.FC = () => {
   };
 
   const handleUpdateWillCall = () => {
-    const selectedTripsArray = Array.from(safeSelectedTrips);
+    const selectedTripsArray = Array.from(safeSelectedTrips) as string[];
     const returnTrips = selectedTripsArray.filter(tripId => {
       const trip = trips.find(t => t.id === tripId);
       return trip?.isReturnTrip;
@@ -1642,10 +1717,10 @@ export const TripManagement: React.FC = () => {
       return (
         <input
           type="datetime-local"
-          value={value ? new Date(value).toISOString().slice(0, 16) : ''}
+          value={value ? toLocalDateTimeStr(value) : ''}
           autoFocus
           onChange={(e) => {
-            const newValue = e.target.value ? new Date(e.target.value).toISOString() : undefined;
+            const newValue = e.target.value || undefined;
 
             // If this is a Will Call trip and driver is setting actual pickup time, clear willCall flag
             if (trip?.willCall && field === 'actualPickupTime' && newValue) {
@@ -1669,7 +1744,7 @@ export const TripManagement: React.FC = () => {
         onClick={() => setEditingTimeField({ tripId, field })}
         className="cursor-pointer hover:bg-gray-100 px-2 py-1 rounded transition-colors"
       >
-        {value ? (showDateInTime ? formatDateTime(value) : formatTime(value)) : '--:--'}
+        {value ? (showDateInTime ? formatDateTimeUS(value) : formatTimeUS(value)) : '--:--'}
       </div>
     );
   };
@@ -2048,7 +2123,7 @@ export const TripManagement: React.FC = () => {
           </span>
           {lastUpdate && (
             <span className="text-xs text-gray-500">
-              {new Date(lastUpdate).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+              {formatTimeUS(lastUpdate)}
             </span>
           )}
         </div>
@@ -2063,7 +2138,7 @@ export const TripManagement: React.FC = () => {
           </span>
           {lastUpdate && (
             <span className="text-xs text-gray-500">
-              {new Date(lastUpdate).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+              {formatTimeUS(lastUpdate)}
             </span>
           )}
         </div>
@@ -2234,34 +2309,6 @@ export const TripManagement: React.FC = () => {
 
     // console.log('Calculated charge for trip', trip.id, ':', rate);
     return rate;
-  };
-
-  const formatDate = (dateString: string) => {
-    const date = new Date(dateString);
-    return date.toLocaleDateString('en-US', {
-      month: '2-digit',
-      day: '2-digit',
-      year: 'numeric',
-    });
-  };
-
-  const formatTime = (dateString: string) => {
-    const date = new Date(dateString);
-    return date.toLocaleTimeString('en-US', {
-      hour: 'numeric',
-      minute: '2-digit',
-      hour12: true,
-    });
-  };
-
-  const formatDateTime = (dateString: string) => {
-    const date = new Date(dateString);
-    return date.toLocaleString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    });
   };
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -2438,9 +2485,10 @@ export const TripManagement: React.FC = () => {
             customerEmail: patientEmail,
             pickupLocation: pickupAddress,
             dropoffLocation: dropoffAddress,
+            scheduledTime: scheduledTime.toISOString(),
             scheduledPickupTime: scheduledTime.toISOString(),
             appointmentTime: appointmentTime ? `${pickupDate} ${appointmentTime}` : '',
-            serviceLevel: serviceLevel as 'ambulatory' | 'wheelchair' | 'stretcher' | 'bariatric',
+            serviceLevel: serviceLevel as 'ambulatory' | 'wheelchair' | 'stretcher',
             journeyType: journeyType as 'one-way' | 'roundtrip',
             returnTime: returnDateTime ? returnDateTime.toISOString() : '',
             returnPickupLocation: journeyType === 'roundtrip' ? dropoffAddress : '',
@@ -2451,7 +2499,11 @@ export const TripManagement: React.FC = () => {
             notes,
             clinicNote: contractorNotes,
             clinicId,
-            contractorId: user?.clinicId || '', // Contractor dispatcher's contractor
+            contractorId: user?.clinicId || '',
+            status: 'pending' as const,
+            tripType: 'clinic' as const,
+            fare: 0,
+            distance: 0,
           };
 
           await addTrip(tripData);
@@ -2992,7 +3044,7 @@ export const TripManagement: React.FC = () => {
               Mark Pending
             </button>
             <button
-              onClick={() => handleBulkStatusUpdate('in-progress')}
+              onClick={() => handleBulkStatusUpdate('in_progress')}
               className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-semibold"
             >
               Mark In Progress
@@ -3020,6 +3072,13 @@ export const TripManagement: React.FC = () => {
               className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors text-sm font-semibold"
             >
               Reinstate
+            </button>
+            <button
+              onClick={handleBulkDelete}
+              className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors text-sm font-semibold flex items-center gap-2"
+            >
+              <Trash2 className="w-4 h-4" />
+              Delete
             </button>
           </div>
         </div>
@@ -3265,7 +3324,7 @@ export const TripManagement: React.FC = () => {
                                     <div style="margin-top:10px;font-size:12px;color:#666;">
                                       <div><strong>Pickup Signature</strong></div>
                                       <div>Signed by: ${sig.signer_name || 'N/A'}</div>
-                                      <div>Signed at: ${new Date(sig.signed_at).toLocaleString()}</div>
+                                      <div>Signed at: ${formatDateTimeUS(sig.signed_at)}</div>
                                     </div>
                                   </div>
                                 `;
@@ -3278,7 +3337,7 @@ export const TripManagement: React.FC = () => {
                               📝 View Signature
                             </button>
                             <span className="text-xs text-gray-500">
-                              {new Date(tripSignatures.get(trip.id)!.pickup!.signed_at).toLocaleDateString()}
+                              {formatDateUS(tripSignatures.get(trip.id)!.pickup!.signed_at)}
                             </span>
                           </div>
                         ) : (
@@ -3467,7 +3526,7 @@ export const TripManagement: React.FC = () => {
       <Modal
         isOpen={isModalOpen}
         onClose={handleCloseModal}
-        title={editingTrip ? 'Edit Trip' : 'Create New Trip'}
+        title={editingTrip ? `Edit Trip - ${editingTrip.tripNumber || editingTrip.id.slice(0, 8).toUpperCase()}` : 'Create New Trip'}
         size="lg"
       >
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -3520,7 +3579,7 @@ export const TripManagement: React.FC = () => {
                         customerEmail: '',
                         pickupLocation: rider.pickupLocation || prev.pickupLocation,
                         dropoffLocation: rider.dropoffLocation || prev.dropoffLocation,
-                        serviceLevel: rider.serviceLevel || prev.serviceLevel,
+                        serviceLevel: (rider.serviceLevel as 'ambulatory' | 'wheelchair' | 'stretcher') || prev.serviceLevel,
                         notes: rider.notes || prev.notes,
                         patientId: rider.id || '',
                       }));
@@ -3560,11 +3619,11 @@ export const TripManagement: React.FC = () => {
                       />
                     </div>
                     <div>
-                      <label className="block text-sm font-semibold text-gray-700 mb-2">Email</label>
+                      <label className="block text-sm font-semibold text-gray-700 mb-2">Member ID</label>
                       <input
-                        type="email"
-                        value={formData.customerEmail}
-                        onChange={e => setFormData({ ...formData, customerEmail: e.target.value })}
+                        type="text"
+                        value={patientForm.memberId}
+                        onChange={e => setPatientForm({ ...patientForm, memberId: e.target.value })}
                         className="w-full px-3 py-2 border border-gray-300 rounded-lg"
                       />
                     </div>
@@ -3621,14 +3680,14 @@ export const TripManagement: React.FC = () => {
                     </div>
                   </div>
 
-                  {/* Account Number and Level of Service */}
+                  {/* Member ID and Level of Service */}
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
-                      <label className="block text-sm font-semibold text-gray-700 mb-1">Account Number</label>
+                      <label className="block text-sm font-semibold text-gray-700 mb-1">Member ID</label>
                       <input
                         type="text"
-                        value={patientForm.accountNumber}
-                        onChange={e => setPatientForm({ ...patientForm, accountNumber: e.target.value })}
+                        value={patientForm.memberId}
+                        onChange={e => setPatientForm({ ...patientForm, memberId: e.target.value })}
                         className="w-full px-3 py-2 border border-gray-300 rounded-lg"
                       />
                     </div>
@@ -4493,115 +4552,17 @@ export const TripManagement: React.FC = () => {
         trip={playbackTrip}
       />
 
-      <Modal
-        isOpen={showImportModal}
-        onClose={() => {
-          setShowImportModal(false);
-          setImportFile(null);
-          setImportPreview([]);
-          setImportErrors([]);
-        }}
-        title="Import Trips"
-      >
-        <div className="space-y-6">
-          <div>
-            <p className="text-sm text-gray-600 mb-4">
-              Upload an Excel (.xlsx) or CSV file to bulk import trips. Download the template to see the required format.
-            </p>
-            <button
-              onClick={downloadTemplate}
-              className="flex items-center space-x-2 text-blue-600 hover:text-blue-700 font-medium text-sm"
-            >
-              <Download className="w-4 h-4" />
-              <span>Download Template</span>
-            </button>
-          </div>
-
-          <div>
-            <label className="block text-sm font-semibold text-gray-700 mb-2">
-              Upload File
-            </label>
-            <input
-              type="file"
-              accept=".xlsx,.xls,.csv"
-              onChange={handleFileUpload}
-              className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
-            />
-          </div>
-
-          {importErrors.length > 0 && (
-            <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-              <h4 className="text-sm font-semibold text-red-800 mb-2">Errors Found:</h4>
-              <ul className="text-sm text-red-700 space-y-1">
-                {importErrors.slice(0, 10).map((error, index) => (
-                  <li key={index}>• {error}</li>
-                ))}
-                {importErrors.length > 10 && (
-                  <li className="text-red-600 font-medium">
-                    ... and {importErrors.length - 10} more errors
-                  </li>
-                )}
-              </ul>
-            </div>
-          )}
-
-          {importPreview.length > 0 && importErrors.length === 0 && (
-            <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-              <h4 className="text-sm font-semibold text-green-800 mb-2">
-                Preview: {importPreview.length} trips ready to import
-              </h4>
-              <div className="max-h-64 overflow-y-auto">
-                <table className="min-w-full text-xs">
-                  <thead className="bg-green-100 sticky top-0">
-                    <tr>
-                      <th className="px-2 py-1 text-left">Patient</th>
-                      <th className="px-2 py-1 text-left">Date</th>
-                      <th className="px-2 py-1 text-left">Time</th>
-                      <th className="px-2 py-1 text-left">Service</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {importPreview.slice(0, 20).map((row, index) => (
-                      <tr key={index} className="border-t border-green-200">
-                        <td className="px-2 py-1">{row['Patient Name'] || row['Rider Name']}</td>
-                        <td className="px-2 py-1">{row['Pickup Date'] || row['Date']}</td>
-                        <td className="px-2 py-1">{row['Pickup Time'] || row['Time']}</td>
-                        <td className="px-2 py-1">{row['Service Level'] || row['Service Type']}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-                {importPreview.length > 20 && (
-                  <p className="text-xs text-green-700 mt-2 text-center">
-                    ... and {importPreview.length - 20} more trips
-                  </p>
-                )}
-              </div>
-            </div>
-          )}
-
-          <div className="flex justify-end space-x-3 pt-4 border-t">
-            <button
-              onClick={() => {
-                setShowImportModal(false);
-                setImportFile(null);
-                setImportPreview([]);
-                setImportErrors([]);
-              }}
-              className="px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={handleImport}
-              disabled={importPreview.length === 0 || importErrors.length > 0 || isProcessingImport}
-              className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:bg-gray-300 disabled:cursor-not-allowed"
-            >
-              {isProcessingImport ? 'Importing...' : 'Import Trips'}
-            </button>
-          </div>
-        </div>
-      </Modal>
+      {showImportModal && (
+        <TripImport
+          onClose={() => {
+            setShowImportModal(false);
+            setImportFile(null);
+            setImportPreview([]);
+            setImportErrors([]);
+          }}
+          onImportComplete={() => refreshData()}
+        />
+      )}
     </div >
   );
 };

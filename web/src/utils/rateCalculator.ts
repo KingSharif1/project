@@ -37,11 +37,33 @@ export const calculateContractorRate = (
     // Contractor: read from rateTiers JSONB
     const tiers = rt[serviceLevel];
     if (Array.isArray(tiers) && tiers.length > 0) {
-      const firstTier = tiers[0];
-      const flatRate = firstTier.rate || 0;
+      const roundedMiles = Math.round(distanceMiles);
+      const label = serviceLevel.charAt(0).toUpperCase() + serviceLevel.slice(1);
+
+      // Find the tier that matches the mileage
+      let matchedTier = tiers.find((t: any) => roundedMiles >= t.fromMiles && roundedMiles <= t.toMiles);
+      // If no tier matches (miles exceed all tiers), use the last/highest tier
+      if (!matchedTier) matchedTier = tiers[tiers.length - 1];
+
+      const lastTier = tiers[tiers.length - 1];
+      const maxBaseMiles = lastTier.toMiles; // e.g. 10
+      const tierRate = matchedTier.rate || 0;
+      let totalRate = tierRate;
+      let breakdown = `${label}: $${tierRate.toFixed(2)} (${matchedTier.fromMiles}-${matchedTier.toMiles} mi)`;
+
+      // Additional mileage kicks in after the LAST tier's max (e.g. after mile 10)
+      const additionalKey = `${serviceLevel}AdditionalRate`;
+      const additionalRate = rt[additionalKey] || 0;
+      if (roundedMiles > maxBaseMiles && additionalRate > 0) {
+        const extraMiles = roundedMiles - maxBaseMiles;
+        const extraCharge = extraMiles * additionalRate;
+        totalRate += extraCharge;
+        breakdown += ` + ${extraMiles}mi × $${additionalRate.toFixed(2)}/mi = $${totalRate.toFixed(2)}`;
+      }
+
       return {
-        rate: Math.round(flatRate * 100) / 100,
-        breakdown: `${serviceLevel.charAt(0).toUpperCase() + serviceLevel.slice(1)} rate: $${flatRate.toFixed(2)} (${firstTier.fromMiles}-${firstTier.toMiles} mi)`
+        rate: Math.round(totalRate * 100) / 100,
+        breakdown
       };
     }
   }
@@ -109,34 +131,25 @@ export const calculateDriverPayout = async (
     let applicableTier = tiers.find((t: number[]) => roundedMiles >= t[0] && roundedMiles <= t[1]);
     if (!applicableTier) applicableTier = tiers[tiers.length - 1];
 
+    // Last tier defines the max base miles (e.g. 10)
+    const lastTier = tiers[tiers.length - 1];
+    const maxBaseMiles = lastTier[1];
+
     const baseRate = applicableTier[2];
-    const baseMiles = applicableTier[1];
-
     let totalPayout = baseRate;
-    let breakdown = `Tier: $${baseRate.toFixed(2)} (${applicableTier[0]}-${applicableTier[1]} mi)`;
+    let breakdown = `$${baseRate.toFixed(2)} (${applicableTier[0]}-${applicableTier[1]} mi)`;
 
-    if (roundedMiles > baseMiles && additionalRate > 0) {
-      const extra = roundedMiles - baseMiles;
+    // Additional mileage kicks in after the LAST tier's max
+    if (roundedMiles > maxBaseMiles && additionalRate > 0) {
+      const extra = roundedMiles - maxBaseMiles;
       totalPayout += extra * additionalRate;
-      breakdown += ` + ${extra}mi × $${additionalRate.toFixed(2)}`;
+      breakdown += ` + ${extra}mi × $${additionalRate.toFixed(2)} = $${totalPayout.toFixed(2)}`;
     }
 
-    // Apply deductions [rental, insurance, %]
-    const deductions = rates.deductions;
-    let totalDeductions = 0;
-    let dedBreakdown = '';
+    // NOTE: Deductions (rental, insurance, %) are applied per PAY PERIOD in the payout export,
+    // NOT per trip. See DriverProfilePage payout export modal for deduction logic.
 
-    if (deductions && Array.isArray(deductions)) {
-      const [rental, insurance, percentage] = deductions;
-      if (rental && rental > 0) { totalDeductions += rental; dedBreakdown += ` - Rental: $${rental.toFixed(2)}`; }
-      if (insurance && insurance > 0) { totalDeductions += insurance; dedBreakdown += ` - Ins: $${insurance.toFixed(2)}`; }
-      if (percentage && percentage > 0) { const pd = totalPayout * (percentage / 100); totalDeductions += pd; dedBreakdown += ` - ${percentage}%: $${pd.toFixed(2)}`; }
-    }
-
-    const finalPayout = Math.max(0, totalPayout - totalDeductions);
-    breakdown += dedBreakdown ? dedBreakdown + ` = $${finalPayout.toFixed(2)}` : ` = $${totalPayout.toFixed(2)}`;
-
-    return { payout: Math.round(finalPayout * 100) / 100, breakdown };
+    return { payout: Math.round(totalPayout * 100) / 100, breakdown };
   } catch (error) {
     console.error('Error calculating driver payout:', error);
     return calculateDefaultDriverPayout(serviceLevel, distanceMiles);
