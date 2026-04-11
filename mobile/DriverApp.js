@@ -242,7 +242,7 @@ export default function DriverApp() {
     setMustChangePassword(false);
   };
 
-  // Handle session replaced by another device
+  // Handle session replaced by another device or expired token
   const handleSessionReplaced = useCallback((error) => {
     if (error?.code === 'SESSION_REPLACED') {
       Alert.alert(
@@ -250,6 +250,13 @@ export default function DriverApp() {
         'You have been logged in on another device. Only one device can be active at a time.',
         [{ text: 'OK', onPress: () => { setIsAuthenticated(false); setMustChangePassword(false); } }]
       );
+      return true;
+    }
+    if (error?.code === 'TOKEN_EXPIRED' || error?.message?.includes('Invalid or expired token')) {
+      console.log('[DriverApp] Token expired - logging out user');
+      setIsAuthenticated(false);
+      setMustChangePassword(false);
+      showToast('error', 'Session Expired', 'Please log in again', 3000);
       return true;
     }
     return false;

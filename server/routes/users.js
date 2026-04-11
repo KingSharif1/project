@@ -157,6 +157,58 @@ router.post('/', requireRole('superadmin', 'admin'), async (req, res) => {
 });
 
 /**
+ * PUT /api/users/profile
+ * Update current user's own profile
+ */
+router.put('/profile', async (req, res) => {
+  try {
+    const { userId } = req.user;
+    const { fullName, username, email, phone, address, city, state, zipCode } = req.body;
+
+    const userUpdates = {};
+    if (fullName !== undefined) {
+      const [firstName, ...lastNameParts] = fullName.trim().split(' ');
+      userUpdates.first_name = firstName || '';
+      userUpdates.last_name = lastNameParts.join(' ') || '';
+    }
+    if (username !== undefined) userUpdates.username = username;
+    if (email !== undefined) userUpdates.email = email;
+    if (phone !== undefined) userUpdates.phone = phone;
+    if (address !== undefined) userUpdates.address = address;
+    if (city !== undefined) userUpdates.city = city;
+    if (state !== undefined) userUpdates.state = state;
+    if (zipCode !== undefined) userUpdates.zip_code = zipCode;
+    userUpdates.updated_at = new Date().toISOString();
+
+    const { data, error } = await supabase
+      .from('users')
+      .update(userUpdates)
+      .eq('id', userId)
+      .select()
+      .single();
+
+    if (error) {
+      console.error('Error updating profile:', error);
+      return res.status(500).json({ error: 'Failed to update profile' });
+    }
+
+    // Log audit
+    await supabase.from('activity_log').insert({
+      user_id: userId,
+      action: 'update_profile',
+      entity_type: 'user',
+      entity_id: userId,
+      details: { updates: Object.keys(req.body) },
+    });
+
+    res.json({ success: true, data, message: 'Profile updated successfully' });
+  } catch (error) {
+    console.error('Error in PUT /users/profile:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+/**
  * PUT /api/users/:id
  * Update a user
  */

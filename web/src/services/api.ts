@@ -65,6 +65,35 @@ export async function logout(token: string): Promise<void> {
 }
 
 /**
+ * Change current user's password
+ */
+export async function changePassword(currentPassword: string, newPassword: string): Promise<{ success: boolean; message: string }> {
+  return apiRequest<{ success: boolean; message: string }>('/auth/change-password', {
+    method: 'POST',
+    body: JSON.stringify({ currentPassword, newPassword }),
+  });
+}
+
+/**
+ * Update current user's profile
+ */
+export async function updateProfile(profileData: {
+  fullName?: string;
+  username?: string;
+  email?: string;
+  phone?: string;
+  address?: string;
+  city?: string;
+  state?: string;
+  zipCode?: string;
+}): Promise<{ success: boolean; data: any; message: string }> {
+  return apiRequest<{ success: boolean; data: any; message: string }>('/users/profile', {
+    method: 'PUT',
+    body: JSON.stringify(profileData),
+  });
+}
+
+/**
  * Get current user profile
  */
 export async function getCurrentUser(token: string): Promise<LoginResponse['user']> {
@@ -228,6 +257,113 @@ export async function uploadFileToStorage(bucket: 'driver-documents' | 'vehicle-
 export async function getSignedUrl(bucket: string, path: string): Promise<string> {
   const result = await apiRequest<{ success: boolean; signedUrl: string }>(`/uploads/signed-url?bucket=${encodeURIComponent(bucket)}&path=${encodeURIComponent(path)}`);
   return result.signedUrl;
+}
+
+// ============ SUBSCRIPTION API ============
+
+export async function getSubscription() {
+  return apiRequest<{ success: boolean; subscription: any }>('/subscriptions');
+}
+
+export async function getPaymentHistory() {
+  return apiRequest<{ success: boolean; payments: any[] }>('/subscriptions/payments');
+}
+
+export async function createCheckoutSession(tier: string) {
+  return apiRequest<{ success: boolean; url: string }>('/subscriptions/create-checkout', {
+    method: 'POST',
+    body: JSON.stringify({ tier }),
+  });
+}
+
+export async function cancelSubscription() {
+  return apiRequest<{ success: boolean; message: string }>('/subscriptions/cancel', {
+    method: 'POST',
+  });
+}
+
+// ============ SUPPORT TICKETS API ============
+
+export async function getSupportTickets(filters?: { status?: string; priority?: string }) {
+  const params = new URLSearchParams();
+  if (filters?.status) params.append('status', filters.status);
+  if (filters?.priority) params.append('priority', filters.priority);
+  const queryString = params.toString();
+  return apiRequest<{ success: boolean; data: any[] }>(`/support/tickets${queryString ? `?${queryString}` : ''}`);
+}
+
+export async function createSupportTicket(ticket: { subject: string; message: string; priority: string }) {
+  return apiRequest<{ success: boolean; data: any }>('/support/tickets', {
+    method: 'POST',
+    body: JSON.stringify(ticket),
+  });
+}
+
+export async function addTicketResponse(ticketId: string, message: string, isInternal?: boolean) {
+  return apiRequest<{ success: boolean; data: any }>(`/support/tickets/${ticketId}/responses`, {
+    method: 'POST',
+    body: JSON.stringify({ message, is_internal: isInternal }),
+  });
+}
+
+export async function updateTicketStatus(ticketId: string, status: string) {
+  return apiRequest<{ success: boolean; data: any }>(`/support/tickets/${ticketId}`, {
+    method: 'PUT',
+    body: JSON.stringify({ status }),
+  });
+}
+
+// ============ ADMIN API ============
+
+export async function getCompanies() {
+  return apiRequest<{ success: boolean; data: any[] }>('/admin/companies');
+}
+
+export async function getCompanyDetails(companyId: string) {
+  return apiRequest<{ success: boolean; data: any }>(`/admin/companies/${companyId}`);
+}
+
+export async function getPendingSignups(status?: string) {
+  const queryString = status ? `?status=${status}` : '';
+  return apiRequest<{ success: boolean; data: any[] }>(`/admin/pending-signups${queryString}`);
+}
+
+export async function createPendingSignup(signup: any) {
+  return apiRequest<{ success: boolean; data: any }>('/admin/pending-signups', {
+    method: 'POST',
+    body: JSON.stringify(signup),
+  });
+}
+
+export async function sendPaymentLink(signupId: string) {
+  return apiRequest<{ success: boolean; data: any }>(`/admin/pending-signups/${signupId}/send-payment`, {
+    method: 'POST',
+  });
+}
+
+export async function cancelPendingSignup(signupId: string) {
+  return apiRequest<{ success: boolean; message: string }>(`/admin/pending-signups/${signupId}`, {
+    method: 'DELETE',
+  });
+}
+
+export async function deactivateCompany(companyId: string, reason?: string) {
+  return apiRequest<{ success: boolean; message: string }>(`/admin/companies/${companyId}/deactivate`, {
+    method: 'PUT',
+    body: JSON.stringify({ reason }),
+  });
+}
+
+export async function activateCompany(companyId: string) {
+  return apiRequest<{ success: boolean; message: string }>(`/admin/companies/${companyId}/activate`, {
+    method: 'PUT',
+  });
+}
+
+export async function deleteCompany(companyId: string) {
+  return apiRequest<{ success: boolean; message: string }>(`/admin/companies/${companyId}`, {
+    method: 'DELETE',
+  });
 }
 
 // ============ PATIENTS/RIDERS API ============
@@ -554,7 +690,19 @@ export async function logTripReminder(data: { tripId: string; reminderType?: str
 
 // ============ TRIP HISTORY API ============
 
-export async function importTrips(data: { trips: any[]; contractorId?: string; clinicId?: string }) {
+export async function validateTripImport(data: { trips: any[]; clinicId?: string }) {
+  return apiRequest<{ 
+    success: boolean; 
+    conflicts: any[]; 
+    duplicateTripNumbers: any[]; 
+    hasConflicts: boolean 
+  }>('/trips/import/validate', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function importTrips(data: { trips: any[]; contractorId?: string; clinicId?: string; conflictResolutions?: Record<string, 'update' | 'keep' | 'skip'> }) {
   return apiRequest<{ success: boolean; message: string; created: number; errors: any[]; skipped: number }>('/trips/import', {
     method: 'POST',
     body: JSON.stringify(data),
@@ -755,6 +903,23 @@ export async function getComplianceMetrics(options?: { latest?: boolean; startDa
   if (options?.endDate) params.set('endDate', options.endDate);
   const qs = params.toString();
   return apiRequest<{ success: boolean; data: any }>(`/settings/compliance-metrics${qs ? '?' + qs : ''}`);
+}
+
+export async function getSmsConfig() {
+  return apiRequest<{ success: boolean; data: any }>('/settings/sms-config');
+}
+
+export async function saveSmsConfig(config: {
+  provider: string;
+  accountSid: string;
+  authToken: string;
+  phoneNumber: string;
+  enabled: boolean;
+}) {
+  return apiRequest<{ success: boolean; data: any; message: string }>('/settings/sms-config', {
+    method: 'POST',
+    body: JSON.stringify(config),
+  });
 }
 
 export async function createComplianceMetric(metric: Record<string, any>) {

@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { LayoutDashboard, Car, Users, BarChart3, Menu, X, UserCog, Activity, LogOut, Shield, CircleUser as UserCircle, Truck, DollarSign, Building2, TrendingUp, Settings as SettingsIcon, ChevronDown, ChevronRight, Bell, Calendar as CalendarIcon, MapPin, PanelLeftClose, PanelLeftOpen, Map as MapIcon, MessageSquare } from 'lucide-react';
+import { LayoutDashboard, Car, Users, BarChart3, Menu, X, UserCog, Activity, LogOut, Shield, CircleUser as UserCircle, Truck, DollarSign, Building2, TrendingUp, Settings as SettingsIcon, ChevronDown, ChevronRight, Bell, Calendar as CalendarIcon, MapPin, PanelLeftClose, PanelLeftOpen, Map as MapIcon, MessageSquare, CreditCard } from 'lucide-react';
 import { subscribeToNotifications, startNotificationProcessor } from './utils/notificationProcessor';
 import { getUnreadMessageCount } from './services/api';
 import { supabase } from './lib/supabase';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { AppProvider } from './context/AppContext';
 import { ThemeProvider } from './context/ThemeContext';
+import { BrandingProvider, useBranding } from './context/BrandingContext';
 import { Login } from './components/Login';
 import { LandingPage } from './components/LandingPage';
 import { Dashboard } from './components/Dashboard';
@@ -28,9 +29,13 @@ import { CalendarSchedulingView } from './components/CalendarSchedulingView';
 import { NotificationCenter } from './components/NotificationCenter';
 import { SuperAdminDashboard } from './components/SuperAdminDashboard';
 import { MessageCenter } from './components/MessageCenter';
+import SuperAdminPortal from './components/SuperAdminPortal';
+import SubscriptionSettings from './components/SubscriptionSettings';
+import SupportTickets from './components/SupportTickets';
+import PricingPage from './components/PricingPage';
 
 
-type View = 'dashboard' | 'trips' | 'calendar' | 'tracking' | 'drivers' | 'riders' | 'vehicles' | 'facilities' | 'users' | 'reports' | 'payouts' | 'analytics' | 'activity' | 'hipaa' | 'settings' | 'reminders' | 'superadmin' | 'messages';
+type View = 'dashboard' | 'trips' | 'calendar' | 'tracking' | 'drivers' | 'riders' | 'vehicles' | 'facilities' | 'users' | 'reports' | 'payouts' | 'analytics' | 'activity' | 'hipaa' | 'settings' | 'reminders' | 'superadmin' | 'messages' | 'subscription' | 'support';
 
 const MainApp: React.FC = () => {
   const { 
@@ -43,6 +48,7 @@ const MainApp: React.FC = () => {
     canManageUsers,
     canManageDrivers,
   } = useAuth();
+  const { branding } = useBranding();
   const [currentView, setCurrentView] = useState<View>('trips');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
@@ -145,6 +151,8 @@ const MainApp: React.FC = () => {
       expanded: systemExpanded,
       setExpanded: setSystemExpanded,
       items: [
+        { id: 'subscription' as View, name: 'Subscription', icon: CreditCard, visible: isAdmin },
+        { id: 'support' as View, name: 'Support', icon: MessageSquare, visible: isAdmin },
         { id: 'activity' as View, name: 'Activity Log', icon: Activity, visible: isAdmin },
         { id: 'hipaa' as View, name: 'HIPAA', icon: Shield, visible: isAdmin },
       ]
@@ -160,6 +168,10 @@ const MainApp: React.FC = () => {
     switch (currentView) {
       case 'superadmin':
         return <SuperAdminDashboard />;
+      case 'subscription':
+        return <SubscriptionSettings />;
+      case 'support':
+        return <SupportTickets />;
       case 'dashboard':
         return <Dashboard onNavigate={setCurrentView} />;
       case 'trips':
@@ -214,7 +226,7 @@ const MainApp: React.FC = () => {
               <div className="w-10 h-10 bg-gradient-to-br from-blue-600 to-cyan-600 rounded-xl flex items-center justify-center">
                 <Car className="w-6 h-6 text-white" />
               </div>
-              <h1 className="text-xl font-bold text-gray-900">TransportHub</h1>
+              <h1 className="text-xl font-bold text-gray-900">{branding.companyName}</h1>
             </div>
             <div className="flex items-center space-x-2">
               <NotificationCenter />
@@ -249,7 +261,7 @@ const MainApp: React.FC = () => {
                     </div>
                     {!sidebarCollapsed && (
                       <div className="flex flex-col min-w-0">
-                        <span className="font-bold text-lg tracking-tight text-gray-900 truncate">TransportHub</span>
+                        <span className="font-bold text-lg tracking-tight text-gray-900 truncate">{branding.companyName}</span>
                         <span className="text-[10px] font-medium text-gray-600 uppercase tracking-wider">Management Portal</span>
                       </div>
                     )}
@@ -437,7 +449,7 @@ const MainApp: React.FC = () => {
                       <Car className="w-7 h-7 text-white" />
                     </div>
                     <div>
-                      <h1 className="text-2xl font-bold text-gray-900">TransportHub</h1>
+                      <h1 className="text-2xl font-bold text-gray-900">{branding.companyName}</h1>
                       <p className="text-sm text-gray-600">Dispatcher Portal</p>
                     </div>
                   </div>
@@ -532,7 +544,9 @@ function App() {
   return (
     <ThemeProvider>
       <AuthProvider>
-        <AppContent />
+        <BrandingProvider>
+          <AppContent />
+        </BrandingProvider>
       </AuthProvider>
     </ThemeProvider>
   );
@@ -541,6 +555,13 @@ function App() {
 const AppContent: React.FC = () => {
   const { user, isSuperAdmin, logout } = useAuth();
   const [showLogin, setShowLogin] = useState(false);
+
+  // Check if user is trying to access pricing page
+  const isPricingPage = window.location.pathname === '/pricing';
+  
+  if (isPricingPage) {
+    return <PricingPage />;
+  }
 
   if (!user) {
     if (showLogin) {
@@ -579,7 +600,7 @@ const AppContent: React.FC = () => {
           </div>
         </header>
         <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-          <SuperAdminDashboard />
+          <SuperAdminPortal />
         </main>
       </div>
     );

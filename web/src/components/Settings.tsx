@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { User, Settings as SettingsIcon, Lock, Mail, Phone, MapPin, Save, AlertCircle, CheckCircle, Eye, EyeOff, Shield } from 'lucide-react';
+import { User, Settings as SettingsIcon, Lock, Mail, Phone, MapPin, Save, AlertCircle, CheckCircle, Eye, EyeOff, Shield, Bell, MessageSquare } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { PasswordStrengthIndicator } from './PasswordStrengthIndicator';
+import * as api from '../services/api';
 
 interface SettingsProps {
   initialTab?: 'profile' | 'password';
@@ -9,13 +10,21 @@ interface SettingsProps {
 
 export const Settings: React.FC<SettingsProps> = ({ initialTab = 'profile' }) => {
   const { user } = useAuth();
-  const [activeTab, setActiveTab] = useState<'profile' | 'password'>(initialTab);
+  const [activeTab, setActiveTab] = useState<'profile' | 'password' | 'notifications'>(initialTab as any);
 
   useEffect(() => {
-    setActiveTab(initialTab);
+    setActiveTab(initialTab as any);
   }, [initialTab]);
   const [successMessage, setSuccessMessage] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
+  
+  const [smsConfig, setSmsConfig] = useState({
+    provider: 'twilio',
+    accountSid: '',
+    authToken: '',
+    phoneNumber: '',
+    enabled: false,
+  });
 
   const [profileData, setProfileData] = useState({
     fullName: user?.fullName || '',
@@ -38,22 +47,21 @@ export const Settings: React.FC<SettingsProps> = ({ initialTab = 'profile' }) =>
   const [showNewPassword, setShowNewPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
-  const handleProfileUpdate = (e: React.FormEvent) => {
+  const handleProfileUpdate = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage('');
     setSuccessMessage('');
 
     try {
-      // In a real app, this would call an API to update the user profile
-      // For now, we'll just show a success message
+      await api.updateProfile(profileData);
       setSuccessMessage('Profile updated successfully!');
       setTimeout(() => setSuccessMessage(''), 3000);
-    } catch (error) {
-      setErrorMessage('Failed to update profile. Please try again.');
+    } catch (error: any) {
+      setErrorMessage(error?.message || 'Failed to update profile. Please try again.');
     }
   };
 
-  const handlePasswordChange = (e: React.FormEvent) => {
+  const handlePasswordChange = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage('');
     setSuccessMessage('');
@@ -79,7 +87,7 @@ export const Settings: React.FC<SettingsProps> = ({ initialTab = 'profile' }) =>
     }
 
     try {
-      // In a real app, this would call an API to change the password
+      await api.changePassword(passwordData.currentPassword, passwordData.newPassword);
       setSuccessMessage('Password changed successfully!');
       setPasswordData({
         currentPassword: '',
@@ -87,8 +95,47 @@ export const Settings: React.FC<SettingsProps> = ({ initialTab = 'profile' }) =>
         confirmPassword: '',
       });
       setTimeout(() => setSuccessMessage(''), 3000);
-    } catch (error) {
-      setErrorMessage('Failed to change password. Please try again.');
+    } catch (error: any) {
+      setErrorMessage(error?.message || 'Failed to change password. Please try again.');
+    }
+  };
+
+  const handleSmsConfigSave = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrorMessage('');
+    setSuccessMessage('');
+
+    if (smsConfig.enabled && (!smsConfig.accountSid || !smsConfig.authToken || !smsConfig.phoneNumber)) {
+      setErrorMessage('Please fill in all SMS provider fields');
+      return;
+    }
+
+    try {
+      const response = await fetch(`${import.meta.env.VITE_API_URL}/sms/settings`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        },
+        body: JSON.stringify({
+          provider: smsConfig.provider,
+          enabled: smsConfig.enabled,
+          account_sid: smsConfig.accountSid,
+          auth_token: smsConfig.authToken,
+          phone_number: smsConfig.phoneNumber
+        })
+      });
+
+      const data = await response.json();
+
+      if (!data.success) {
+        throw new Error(data.error || 'Failed to save SMS configuration');
+      }
+
+      setSuccessMessage('SMS configuration saved successfully!');
+      setTimeout(() => setSuccessMessage(''), 3000);
+    } catch (error: any) {
+      setErrorMessage(error.message || 'Failed to save SMS configuration. Please try again.');
     }
   };
 
@@ -147,6 +194,19 @@ export const Settings: React.FC<SettingsProps> = ({ initialTab = 'profile' }) =>
               <div className="flex items-center justify-center space-x-2">
                 <Lock className="w-5 h-5" />
                 <span>Change Password</span>
+              </div>
+            </button>
+            <button
+              onClick={() => setActiveTab('notifications')}
+              className={`flex-1 px-6 py-4 text-sm font-semibold transition-colors ${
+                activeTab === 'notifications'
+                  ? 'text-blue-600 border-b-2 border-blue-600 bg-blue-50'
+                  : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
+              }`}
+            >
+              <div className="flex items-center justify-center space-x-2">
+                <Bell className="w-5 h-5" />
+                <span>SMS & Notifications</span>
               </div>
             </button>
           </div>
@@ -409,6 +469,123 @@ export const Settings: React.FC<SettingsProps> = ({ initialTab = 'profile' }) =>
                 >
                   <Lock className="w-5 h-5" />
                   <span>Change Password</span>
+                </button>
+              </div>
+            </form>
+          )}
+
+          {activeTab === 'notifications' && (
+            <form onSubmit={handleSmsConfigSave} className="space-y-6">
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                <div className="flex items-start space-x-3">
+                  <MessageSquare className="w-5 h-5 text-blue-600 mt-0.5 flex-shrink-0" />
+                  <div>
+                    <p className="text-sm font-semibold text-blue-900 mb-1">SMS Provider Configuration</p>
+                    <p className="text-sm text-blue-700">
+                      Configure your SMS provider to enable trip reminders and notifications
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
+                <div>
+                  <p className="font-semibold text-gray-900">Enable SMS Notifications</p>
+                  <p className="text-sm text-gray-600">Send automated trip reminders via SMS</p>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={smsConfig.enabled}
+                    onChange={e => setSmsConfig({ ...smsConfig, enabled: e.target.checked })}
+                    className="sr-only peer"
+                  />
+                  <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                </label>
+              </div>
+
+              {smsConfig.enabled && (
+                <>
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-2">
+                      SMS Provider
+                    </label>
+                    <select
+                      value={smsConfig.provider}
+                      onChange={e => setSmsConfig({ ...smsConfig, provider: e.target.value })}
+                      className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    >
+                      <option value="twilio">Twilio</option>
+                      <option value="other" disabled>Other providers (coming soon)</option>
+                    </select>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div>
+                      <label className="block text-sm font-semibold text-gray-700 mb-2">
+                        Account SID
+                      </label>
+                      <input
+                        type="text"
+                        required={smsConfig.enabled}
+                        value={smsConfig.accountSid}
+                        onChange={e => setSmsConfig({ ...smsConfig, accountSid: e.target.value })}
+                        className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono text-sm"
+                        placeholder="ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-semibold text-gray-700 mb-2">
+                        Auth Token
+                      </label>
+                      <input
+                        type="password"
+                        required={smsConfig.enabled}
+                        value={smsConfig.authToken}
+                        onChange={e => setSmsConfig({ ...smsConfig, authToken: e.target.value })}
+                        className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono text-sm"
+                        placeholder="••••••••••••••••••••••••••••••••"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-2">
+                      Twilio Phone Number
+                    </label>
+                    <div className="relative">
+                      <Phone className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+                      <input
+                        type="tel"
+                        required={smsConfig.enabled}
+                        value={smsConfig.phoneNumber}
+                        onChange={e => setSmsConfig({ ...smsConfig, phoneNumber: e.target.value })}
+                        className="w-full pl-12 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        placeholder="+1 (555) 123-4567"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
+                    <div className="flex items-start space-x-3">
+                      <AlertCircle className="w-5 h-5 text-amber-600 mt-0.5 flex-shrink-0" />
+                      <div className="text-sm text-amber-800">
+                        <p className="font-semibold mb-1">Important Security Note</p>
+                        <p>Your SMS credentials are stored securely. Never share your Auth Token with anyone. You can find these credentials in your Twilio Console.</p>
+                      </div>
+                    </div>
+                  </div>
+                </>
+              )}
+
+              <div className="flex items-center justify-end pt-6 border-t border-gray-200">
+                <button
+                  type="submit"
+                  className="flex items-center space-x-2 bg-blue-600 text-white px-6 py-3 rounded-lg font-semibold hover:bg-blue-700 transition-colors shadow-sm hover:shadow-md"
+                >
+                  <Save className="w-5 h-5" />
+                  <span>Save Configuration</span>
                 </button>
               </div>
             </form>

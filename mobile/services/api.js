@@ -57,6 +57,21 @@ class APIService {
           err.code = 'SESSION_REPLACED';
           throw err;
         }
+        
+        // Auto-logout on invalid or expired token
+        const errorMsg = data.error || data.message || '';
+        if (errorMsg.includes('Invalid or expired token') || 
+            errorMsg.includes('invalid token') || 
+            errorMsg.includes('expired token') ||
+            errorMsg.includes('jwt expired') ||
+            response.status === 401) {
+          console.log('[API] Token invalid/expired - clearing auth and forcing logout');
+          await this.clearToken();
+          const err = new Error('Invalid or expired token');
+          err.code = 'TOKEN_EXPIRED';
+          throw err;
+        }
+        
         throw new Error(data.error || data.message || 'API request failed');
       }
 

@@ -66,6 +66,74 @@ router.put('/document-submissions/:id/reject', requireRole('superadmin', 'admin'
   }
 });
 
+// ============ SMS CONFIGURATION ============
+
+router.get('/sms-config', async (req, res) => {
+  try {
+    const { userId } = req.user;
+    const { data, error } = await supabase
+      .from('system_settings')
+      .select('*')
+      .eq('category', 'sms')
+      .eq('updated_by', userId)
+      .maybeSingle();
+    
+    if (error && error.code !== 'PGRST116') {
+      return res.status(500).json({ error: error.message });
+    }
+    
+    res.json({ success: true, data: data?.setting_value || null });
+  } catch (error) {
+    console.error('Error in GET /sms-config:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+router.post('/sms-config', requireRole('superadmin', 'admin'), async (req, res) => {
+  try {
+    const { userId } = req.user;
+    const { provider, accountSid, authToken, phoneNumber, enabled } = req.body;
+    
+    const smsConfig = {
+      provider,
+      accountSid,
+      authToken,
+      phoneNumber,
+      enabled,
+    };
+    
+    const { data, error } = await supabase
+      .from('system_settings')
+      .upsert({
+        setting_key: 'sms_config',
+        setting_value: smsConfig,
+        category: 'sms',
+        updated_by: userId,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'setting_key' })
+      .select()
+      .single();
+    
+    if (error) {
+      console.error('Error saving SMS config:', error);
+      return res.status(500).json({ error: 'Failed to save SMS configuration' });
+    }
+    
+    // Log audit
+    await supabase.from('activity_log').insert({
+      user_id: userId,
+      action: 'update_sms_config',
+      entity_type: 'settings',
+      details: { enabled },
+    });
+    
+    res.json({ success: true, data, message: 'SMS configuration saved successfully' });
+  } catch (error) {
+    console.error('Error in POST /sms-config:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // ============ SYSTEM SETTINGS ============
 
 router.get('/system-settings', async (req, res) => {

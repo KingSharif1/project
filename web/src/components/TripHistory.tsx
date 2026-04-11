@@ -4,6 +4,7 @@ import * as api from '../services/api';
 import { formatDateUS, formatDateTimeUS, formatTimeUS } from '../utils/dateFormatter';
 import { generateTripReportPDF } from '../utils/tripReportPDF';
 import { TripHistoryMap } from './TripHistoryMap';
+import html2canvas from 'html2canvas';
 
 interface TripHistoryProps {
   tripId: string;
@@ -210,6 +211,27 @@ export const TripHistory: React.FC<TripHistoryProps> = ({
     }
 
     try {
+      let mapImageData: string | undefined;
+
+      // Capture map as image if location history exists
+      if (locationHistory.length > 0) {
+        const mapContainer = document.querySelector('.leaflet-container') as HTMLElement;
+        if (mapContainer) {
+          try {
+            const canvas = await html2canvas(mapContainer, {
+              useCORS: true,
+              allowTaint: true,
+              backgroundColor: '#ffffff',
+              scale: 2, // Higher quality
+            });
+            mapImageData = canvas.toDataURL('image/png');
+          } catch (mapError) {
+            console.error('Error capturing map image:', mapError);
+            // Continue without map image
+          }
+        }
+      }
+
       await generateTripReportPDF({
         trip: tripData,
         statusHistory: statusHistory.map(entry => ({
@@ -223,6 +245,7 @@ export const TripHistory: React.FC<TripHistoryProps> = ({
         driverSignature: driverSignature || undefined,
         driverName: driverName,
         locationHistory: locationHistory,
+        mapImageData: mapImageData,
       });
     } catch (error) {
       console.error('Error generating PDF:', error);

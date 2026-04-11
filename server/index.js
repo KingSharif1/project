@@ -18,6 +18,11 @@ import auditRoutes from './routes/audit.js';
 import settingsRoutes from './routes/settings.js';
 import uploadsRoutes from './routes/uploads.js';
 import messagesRoutes from './routes/messages.js';
+import subscriptionsRoutes from './routes/subscriptions.js';
+import smsRoutes from './routes/sms.js';
+import adminRoutes from './routes/admin.js';
+import supportRoutes from './routes/support.js';
+import publicRoutes from './routes/public.js';
 
 dotenv.config();
 
@@ -60,6 +65,7 @@ app.get('/', (req, res) => {
 });
 
 // Routes
+app.use('/api/public', publicRoutes); // Public routes (no auth required)
 app.use('/api/auth', authRoutes);
 app.use('/api/mobile', mobileRoutes);
 app.use('/api/drivers', driversRoutes);
@@ -77,6 +83,10 @@ app.use('/api/audit', auditRoutes);
 app.use('/api/settings', settingsRoutes);
 app.use('/api/uploads', uploadsRoutes);
 app.use('/api/messages', messagesRoutes);
+app.use('/api/subscriptions', subscriptionsRoutes);
+app.use('/api/sms', smsRoutes);
+app.use('/api/admin', adminRoutes);
+app.use('/api/support', supportRoutes);
 
 // 404 handler
 app.use((req, res) => {

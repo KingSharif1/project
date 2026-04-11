@@ -6,6 +6,9 @@
     "development": {
       "developmentClient": true,
       "distribution": "internal",
+      "env": {
+        "APP_ENV": "development"
+      },
       "ios": {
         "simulator": true,
         "buildConfiguration": "Debug"
@@ -17,6 +20,9 @@
     },
     "preview": {
       "distribution": "internal",
+      "env": {
+        "APP_ENV": "staging"
+      },
       "ios": {
         "simulator": false,
         "buildConfiguration": "Release"
@@ -28,20 +34,35 @@
     },
     "production": {
       "distribution": "store",
+      "env": {
+        "APP_ENV": "production"
+      },
       "ios": {
         "simulator": false,
         "buildConfiguration": "Release",
-        "autoIncrement": true
+        "autoIncrement": true,
+        "resourceClass": "m-medium"
       },
       "android": {
         "buildType": "app-bundle",
         "gradleCommand": ":app:bundleRelease",
-        "autoIncrement": true
+        "autoIncrement": true,
+        "resourceClass": "medium"
       },
       "channel": "production"
     }
   },
   "submit": {
-    "production": {}
+    "production": {
+      "ios": {
+        "appleId": "YOUR_APPLE_ID@email.com",
+        "ascAppId": "YOUR_APP_STORE_CONNECT_APP_ID",
+        "appleTeamId": "YOUR_APPLE_TEAM_ID"
+      },
+      "android": {
+        "serviceAccountKeyPath": "./google-play-service-account.json",
+        "track": "production"
+      }
+    }
   }
 }

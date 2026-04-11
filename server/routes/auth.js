@@ -98,6 +98,27 @@ router.post('/login', async (req, res) => {
           return res.status(403).json({ error: 'Account is not active' });
         }
 
+        // Check if company is deactivated
+        if (emailFallback.clinic_id) {
+          const { data: clinic } = await supabase
+            .from('clinics')
+            .select('is_active, deactivation_reason')
+            .eq('id', emailFallback.clinic_id)
+            .single();
+
+          if (clinic && !clinic.is_active) {
+            const reason = clinic.deactivation_reason || 'Your company account has been deactivated';
+            const contactMsg = emailFallback.role === 'driver' || emailFallback.role === 'dispatcher'
+              ? ' Please contact your administrator for more information.'
+              : ' Please contact support for more information.';
+            return res.status(403).json({ 
+              error: reason + contactMsg,
+              deactivated: true,
+              canContactAdmin: emailFallback.role === 'driver' || emailFallback.role === 'dispatcher'
+            });
+          }
+        }
+
         // Create response and return
         const { token, userProfile } = createLoginResponse(emailFallback);
         
@@ -134,6 +155,27 @@ router.post('/login', async (req, res) => {
     // Check if user is active
     if (userData.status !== 'active') {
       return res.status(403).json({ error: 'Account is not active' });
+    }
+
+    // Check if company is deactivated
+    if (userData.clinic_id) {
+      const { data: clinic } = await supabase
+        .from('clinics')
+        .select('is_active, deactivation_reason')
+        .eq('id', userData.clinic_id)
+        .single();
+
+      if (clinic && !clinic.is_active) {
+        const reason = clinic.deactivation_reason || 'Your company account has been deactivated';
+        const contactMsg = userData.role === 'driver' || userData.role === 'dispatcher'
+          ? ' Please contact your administrator for more information.'
+          : ' Please contact support for more information.';
+        return res.status(403).json({ 
+          error: reason + contactMsg,
+          deactivated: true,
+          canContactAdmin: userData.role === 'driver' || userData.role === 'dispatcher'
+        });
+      }
     }
 
     // Create response using helper

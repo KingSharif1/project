@@ -20,22 +20,57 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onLoginClick }) => {
     message: ''
   });
   const [formSubmitted, setFormSubmitted] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [captchaNum1] = useState(() => Math.floor(Math.random() * 10) + 1);
+  const [captchaNum2] = useState(() => Math.floor(Math.random() * 10) + 1);
+  const [captchaAnswer, setCaptchaAnswer] = useState('');
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setFormSubmitted(true);
-    setTimeout(() => {
-      setShowRequestForm(false);
-      setFormSubmitted(false);
-      setFormData({
-        organizationName: '',
-        contactName: '',
-        email: '',
-        phone: '',
-        message: ''
+
+    // Validate captcha
+    if (parseInt(captchaAnswer) !== captchaNum1 + captchaNum2) {
+      alert('Incorrect answer to the math question. Please try again.');
+      return;
+    }
+
+    setSubmitting(true);
+
+    try {
+      const response = await fetch('http://localhost:3000/api/public/contact', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          company_name: formData.organizationName,
+          contact_name: formData.contactName,
+          email: formData.email,
+          phone: formData.phone,
+          message: formData.message
+        })
       });
-    }, 3000);
+
+      if (!response.ok) throw new Error('Failed to submit');
+
+      setFormSubmitted(true);
+      setTimeout(() => {
+        setShowRequestForm(false);
+        setFormSubmitted(false);
+        setCaptchaAnswer('');
+        setFormData({
+          organizationName: '',
+          contactName: '',
+          email: '',
+          phone: '',
+          message: ''
+        });
+      }, 3000);
+    } catch (error) {
+      console.error('Error submitting contact form:', error);
+      alert('Failed to submit form. Please try again.');
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const scrollToSection = (id: string) => {
@@ -68,7 +103,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onLoginClick }) => {
           <div className="hidden md:flex items-center gap-8">
             <button onClick={() => scrollToSection('#features')} className="text-sm text-premium-accent-slate hover:text-white transition-colors">Features</button>
             <button onClick={() => scrollToSection('#testimonials')} className="text-sm text-premium-accent-slate hover:text-white transition-colors">Testimonials</button>
-            <button onClick={() => scrollToSection('#pricing')} className="text-sm text-premium-accent-slate hover:text-white transition-colors">Pricing</button>
+            <a href="/pricing" className="text-sm text-premium-accent-slate hover:text-white transition-colors">Pricing</a>
             <PremiumButton size="sm" variant="secondary" onClick={onLoginClick}>
               Login
             </PremiumButton>
@@ -93,7 +128,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onLoginClick }) => {
           <div className="md:hidden absolute top-full left-0 right-0 bg-premium-dark/95 backdrop-blur-xl border-b border-white/[0.05] p-6 space-y-4">
             <button onClick={() => scrollToSection('#features')} className="block text-sm text-premium-accent-slate hover:text-white transition-colors">Features</button>
             <button onClick={() => scrollToSection('#testimonials')} className="block text-sm text-premium-accent-slate hover:text-white transition-colors">Testimonials</button>
-            <button onClick={() => scrollToSection('#pricing')} className="block text-sm text-premium-accent-slate hover:text-white transition-colors">Pricing</button>
+            <a href="/pricing" className="block text-sm text-premium-accent-slate hover:text-white transition-colors">Pricing</a>
             <div className="pt-4 flex flex-col gap-3">
               <PremiumButton size="sm" variant="secondary" onClick={onLoginClick} className="w-full">
                 Login
@@ -227,7 +262,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onLoginClick }) => {
           <GlassCard className="max-w-lg w-full relative p-8">
             <button
               onClick={() => setShowRequestForm(false)}
-              className="absolute top-6 right-6 text-white/30 hover:text-white transition-colors"
+              className="absolute top-4 right-4 text-premium-accent-slate hover:text-white transition-colors"
             >
               ✕
             </button>
@@ -285,8 +320,21 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onLoginClick }) => {
                       onChange={(e) => setFormData({ ...formData, message: e.target.value })}
                     />
                   </div>
-                  <PremiumButton type="submit" className="w-full mt-2">
-                    Submit Request
+                  <div className="bg-white/[0.03] border border-white/[0.08] rounded-lg p-4 space-y-2">
+                    <label className="block text-xs font-medium text-premium-accent-slate">
+                      Security Check: What is {captchaNum1} + {captchaNum2}? *
+                    </label>
+                    <input
+                      type="number"
+                      required
+                      value={captchaAnswer}
+                      onChange={(e) => setCaptchaAnswer(e.target.value)}
+                      className="w-full bg-white/[0.03] border border-white/[0.08] rounded-lg py-2 px-4 text-white placeholder-premium-accent-slate/30 focus:outline-none focus:bg-white/[0.06] focus:border-white/20 transition-all text-sm"
+                      placeholder="Enter answer"
+                    />
+                  </div>
+                  <PremiumButton type="submit" className="w-full mt-2" disabled={submitting}>
+                    {submitting ? 'Submitting...' : 'Submit Request'}
                   </PremiumButton>
                 </form>
               </>

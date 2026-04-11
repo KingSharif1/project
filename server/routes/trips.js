@@ -1014,17 +1014,137 @@ router.get('/invoice-history', async (req, res) => {
 });
 
 /**
+ * POST /api/trips/import/validate
+ * Validate trip import data and detect conflicts
+ * Returns: { conflicts: [...], duplicateTripNumbers: [...] }
+ */
+router.post('/import/validate', requireRole('superadmin', 'admin', 'dispatcher'), async (req, res) => {
+  try {
+    const { trips: rows, clinicId } = req.body;
+
+    if (!rows || !Array.isArray(rows) || rows.length === 0) {
+      return res.status(400).json({ error: 'No trip data provided' });
+    }
+
+    const tripClinicId = clinicId || req.user.clinicId;
+    const conflicts = [];
+    const duplicateTripNumbers = [];
+
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      const rowNum = i + 2; // CSV row (1-indexed header + data)
+
+      // Check trip number duplicates
+      const baseTripNum = (row.TripNum || row['Trip Num'] || '').toString().trim();
+      if (baseTripNum) {
+        const { data: existing } = await supabase
+          .from('trips')
+          .select('id, trip_number')
+          .eq('trip_number', baseTripNum)
+          .limit(1);
+        
+        if (existing && existing.length > 0) {
+          duplicateTripNumbers.push({ row: rowNum, tripNumber: baseTripNum });
+        }
+      }
+
+      // Check patient conflicts
+      const firstName = (row.FirstName || '').trim();
+      const lastName = (row.LastName || '').trim();
+      const phone = (row.RiderPhone || '').trim();
+      const dob = (row.DOB || '').trim();
+      const memberId = (row.TripId || '').toString().trim();
+
+      if (firstName && lastName && memberId) {
+        // Parse DOB
+        let dobISO = null;
+        if (dob) {
+          const dobParts = dob.split('/');
+          if (dobParts.length === 3) {
+            dobISO = `${dobParts[2]}-${dobParts[0].padStart(2, '0')}-${dobParts[1].padStart(2, '0')}`;
+          }
+        }
+
+        // Find existing patient by member_id
+        const { data: existingPatients } = await supabase
+          .from('patients')
+          .select('id, first_name, last_name, phone, date_of_birth, member_id')
+          .eq('member_id', memberId)
+          .limit(1);
+
+        if (existingPatients && existingPatients.length > 0) {
+          const existing = existingPatients[0];
+          const differences = [];
+
+          // Compare fields
+          if (existing.first_name?.toLowerCase() !== firstName.toLowerCase()) {
+            differences.push({
+              field: 'First Name',
+              csvValue: firstName,
+              dbValue: existing.first_name
+            });
+          }
+          if (existing.last_name?.toLowerCase() !== lastName.toLowerCase()) {
+            differences.push({
+              field: 'Last Name',
+              csvValue: lastName,
+              dbValue: existing.last_name
+            });
+          }
+          if (phone && existing.phone !== phone) {
+            differences.push({
+              field: 'Phone',
+              csvValue: phone,
+              dbValue: existing.phone || 'Not set'
+            });
+          }
+          if (dobISO && existing.date_of_birth !== dobISO) {
+            differences.push({
+              field: 'Date of Birth',
+              csvValue: dob,
+              dbValue: existing.date_of_birth || 'Not set'
+            });
+          }
+
+          // If there are differences, add to conflicts
+          if (differences.length > 0) {
+            conflicts.push({
+              row: rowNum,
+              memberId: memberId,
+              patientId: existing.id,
+              patientName: `${existing.first_name} ${existing.last_name}`,
+              differences: differences
+            });
+          }
+        }
+      }
+    }
+
+    res.json({
+      success: true,
+      conflicts: conflicts,
+      duplicateTripNumbers: duplicateTripNumbers,
+      hasConflicts: conflicts.length > 0 || duplicateTripNumbers.length > 0
+    });
+  } catch (error) {
+    console.error('Error in POST /trips/import/validate:', error);
+    res.status(500).json({ error: 'Failed to validate import: ' + error.message });
+  }
+});
+
+/**
  * POST /api/trips/import
  * Bulk import trips from parsed CSV data
- * Body: { trips: [...], contractorId?, clinicId? }
+ * Body: { trips: [...], contractorId?, clinicId?, conflictResolutions?: {...} }
  * Each trip row: { TripId, FirstName, LastName, RiderPhone, DOB, PickupStreet, PickupCity, PickupState, PickupZip,
  *   DropoffStreet, DropoffCity, DropoffState, DropoffZip, AppointmentTime, PUDate, PUTime, FacilityPhone,
  *   LOS, TripType, AdditionalPassengers, PatientNotes, Miles, Comments, TripNum }
+ * conflictResolutions: { [memberId]: 'update' | 'keep' | 'skip' }
  */
 router.post('/import', requireRole('superadmin', 'admin', 'dispatcher'), async (req, res) => {
   try {
     const { userId } = req.user;
-    const { trips: rows, contractorId, clinicId } = req.body;
+    const { trips: rows, contractorId, clinicId, conflictResolutions } = req.body;
 
     if (!rows || !Array.isArray(rows) || rows.length === 0) {
       return res.status(400).json({ error: 'No trip data provided' });
@@ -1032,6 +1152,7 @@ router.post('/import', requireRole('superadmin', 'admin', 'dispatcher'), async (
 
     const tripClinicId = clinicId || req.user.clinicId;
     const results = { created: 0, errors: [], skipped: 0 };
+    const resolutions = conflictResolutions || {};
 
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i];
@@ -1054,6 +1175,12 @@ router.post('/import', requireRole('superadmin', 'admin', 'dispatcher'), async (
             if (dobParts.length === 3) {
               dobISO = `${dobParts[2]}-${dobParts[0].padStart(2, '0')}-${dobParts[1].padStart(2, '0')}`;
             }
+          }
+
+          // Check if user wants to skip this row due to conflict
+          if (memberId && resolutions[memberId] === 'skip') {
+            results.skipped++;
+            continue;
           }
 
           // Try to find existing patient by multiple criteria (member_id, name+DOB, name+phone)
@@ -1099,6 +1226,21 @@ router.post('/import', requireRole('superadmin', 'admin', 'dispatcher'), async (
 
           if (existingPatients && existingPatients.length > 0) {
             patientId = existingPatients[0].id;
+            
+            // If user chose to update patient info, do it now
+            if (memberId && resolutions[memberId] === 'update') {
+              await supabase
+                .from('patients')
+                .update({
+                  first_name: firstName,
+                  last_name: lastName,
+                  phone: phone || null,
+                  date_of_birth: dobISO,
+                  service_level: (row.LOS || 'ambulatory').toLowerCase(),
+                })
+                .eq('id', patientId);
+            }
+            // If 'keep', we just use existing patient without updating
           } else {
             // Create new patient only if no match found
             const { data: newPatient, error: patientError } = await supabase

@@ -34,13 +34,16 @@ export const TripImport: React.FC<TripImportProps> = ({ onClose, onImportComplet
   const { contractors } = useApp();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const [step, setStep] = useState<'upload' | 'preview' | 'importing' | 'result'>('upload');
+  const [step, setStep] = useState<'upload' | 'preview' | 'conflicts' | 'importing' | 'result'>('upload');
   const [fileName, setFileName] = useState('');
   const [parsedRows, setParsedRows] = useState<ParsedRow[]>([]);
   const [contractorId, setContractorId] = useState('');
   const [importResult, setImportResult] = useState<ImportResult | null>(null);
   const [showAllRows, setShowAllRows] = useState(false);
   const [dragOver, setDragOver] = useState(false);
+  const [conflicts, setConflicts] = useState<any[]>([]);
+  const [duplicateTripNumbers, setDuplicateTripNumbers] = useState<any[]>([]);
+  const [conflictResolutions, setConflictResolutions] = useState<Record<string, 'update' | 'keep' | 'skip'>>({});
 
   const parseCSV = useCallback((text: string): ParsedRow[] => {
     const lines = text.split(/\r?\n/).filter(line => line.trim());
@@ -113,6 +116,36 @@ export const TripImport: React.FC<TripImportProps> = ({ onClose, onImportComplet
     if (file) handleFileSelect(file);
   };
 
+  const handleValidate = async () => {
+    if (parsedRows.length === 0) return;
+
+    setStep('importing');
+
+    try {
+      const validation = await api.validateTripImport({
+        trips: parsedRows,
+      });
+
+      if (validation.hasConflicts) {
+        setConflicts(validation.conflicts || []);
+        setDuplicateTripNumbers(validation.duplicateTripNumbers || []);
+        setStep('conflicts');
+      } else {
+        // No conflicts, proceed directly to import
+        await handleImport();
+      }
+    } catch (error: any) {
+      setImportResult({
+        success: false,
+        message: error.message || 'Validation failed',
+        created: 0,
+        errors: [{ row: 0, error: error.message || 'Unknown error' }],
+        skipped: 0,
+      });
+      setStep('result');
+    }
+  };
+
   const handleImport = async () => {
     if (parsedRows.length === 0) return;
 
@@ -122,6 +155,7 @@ export const TripImport: React.FC<TripImportProps> = ({ onClose, onImportComplet
       const result = await api.importTrips({
         trips: parsedRows,
         contractorId: contractorId || undefined,
+        conflictResolutions: Object.keys(conflictResolutions).length > 0 ? conflictResolutions : undefined,
       });
 
       setImportResult(result);
@@ -140,6 +174,18 @@ export const TripImport: React.FC<TripImportProps> = ({ onClose, onImportComplet
       });
       setStep('result');
     }
+  };
+
+  const handleResolveConflict = (memberId: string, resolution: 'update' | 'keep' | 'skip') => {
+    setConflictResolutions(prev => ({ ...prev, [memberId]: resolution }));
+  };
+
+  const handleResolveAllConflicts = (resolution: 'update' | 'keep' | 'skip') => {
+    const newResolutions: Record<string, 'update' | 'keep' | 'skip'> = {};
+    conflicts.forEach(c => {
+      newResolutions[c.memberId] = resolution;
+    });
+    setConflictResolutions(newResolutions);
   };
 
   const handleDownloadTemplate = () => {
@@ -341,7 +387,122 @@ export const TripImport: React.FC<TripImportProps> = ({ onClose, onImportComplet
             </div>
           )}
 
-          {/* Step 3: Importing */}
+          {/* Step 3: Conflicts */}
+          {step === 'conflicts' && (
+            <div className="space-y-5">
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
+                <div className="flex gap-3">
+                  <AlertTriangle className="w-5 h-5 text-amber-500 flex-shrink-0 mt-0.5" />
+                  <div className="text-sm text-amber-800">
+                    <p className="font-medium mb-1">Conflicts Detected</p>
+                    <p className="text-amber-700">
+                      {conflicts.length} patient{conflicts.length !== 1 ? 's' : ''} with member ID already exist but have different information.
+                      {duplicateTripNumbers.length > 0 && ` Also, ${duplicateTripNumbers.length} duplicate trip number${duplicateTripNumbers.length !== 1 ? 's' : ''} found.`}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {duplicateTripNumbers.length > 0 && (
+                <div>
+                  <h3 className="text-sm font-semibold text-gray-700 mb-2">Duplicate Trip Numbers (Will Be Skipped)</h3>
+                  <div className="bg-red-50 border border-red-200 rounded-lg divide-y divide-red-100 max-h-32 overflow-y-auto">
+                    {duplicateTripNumbers.map((dup, i) => (
+                      <div key={i} className="px-4 py-2 text-sm text-red-700">
+                        Row {dup.row}: Trip #{dup.tripNumber} already exists
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {conflicts.length > 0 && (
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <h3 className="text-sm font-semibold text-gray-700">Patient Information Conflicts</h3>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => handleResolveAllConflicts('update')}
+                        className="px-3 py-1 text-xs font-medium text-blue-600 hover:bg-blue-50 rounded border border-blue-300"
+                      >
+                        Update All
+                      </button>
+                      <button
+                        onClick={() => handleResolveAllConflicts('keep')}
+                        className="px-3 py-1 text-xs font-medium text-green-600 hover:bg-green-50 rounded border border-green-300"
+                      >
+                        Keep All
+                      </button>
+                      <button
+                        onClick={() => handleResolveAllConflicts('skip')}
+                        className="px-3 py-1 text-xs font-medium text-red-600 hover:bg-red-50 rounded border border-red-300"
+                      >
+                        Skip All
+                      </button>
+                    </div>
+                  </div>
+                  <div className="space-y-3 max-h-96 overflow-y-auto">
+                    {conflicts.map((conflict, i) => (
+                      <div key={i} className="bg-white border border-gray-200 rounded-lg p-4">
+                        <div className="flex items-start justify-between mb-3">
+                          <div>
+                            <p className="font-medium text-gray-900">Row {conflict.row}: {conflict.patientName}</p>
+                            <p className="text-xs text-gray-500">Member ID: {conflict.memberId}</p>
+                          </div>
+                          <div className="flex gap-2">
+                            <button
+                              onClick={() => handleResolveConflict(conflict.memberId, 'update')}
+                              className={`px-3 py-1 text-xs font-medium rounded transition-colors ${
+                                conflictResolutions[conflict.memberId] === 'update'
+                                  ? 'bg-blue-600 text-white'
+                                  : 'text-blue-600 hover:bg-blue-50 border border-blue-300'
+                              }`}
+                            >
+                              Update
+                            </button>
+                            <button
+                              onClick={() => handleResolveConflict(conflict.memberId, 'keep')}
+                              className={`px-3 py-1 text-xs font-medium rounded transition-colors ${
+                                conflictResolutions[conflict.memberId] === 'keep'
+                                  ? 'bg-green-600 text-white'
+                                  : 'text-green-600 hover:bg-green-50 border border-green-300'
+                              }`}
+                            >
+                              Keep Existing
+                            </button>
+                            <button
+                              onClick={() => handleResolveConflict(conflict.memberId, 'skip')}
+                              className={`px-3 py-1 text-xs font-medium rounded transition-colors ${
+                                conflictResolutions[conflict.memberId] === 'skip'
+                                  ? 'bg-red-600 text-white'
+                                  : 'text-red-600 hover:bg-red-50 border border-red-300'
+                              }`}
+                            >
+                              Skip Trip
+                            </button>
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-3 gap-3 text-xs">
+                          <div className="font-medium text-gray-600">Field</div>
+                          <div className="font-medium text-gray-600">CSV Value</div>
+                          <div className="font-medium text-gray-600">Database Value</div>
+                          {conflict.differences.map((diff: any, j: number) => (
+                            <React.Fragment key={j}>
+                              <div className="text-gray-700">{diff.field}</div>
+                              <div className="text-blue-700 font-medium">{diff.csvValue}</div>
+                              <div className="text-gray-700">{diff.dbValue}</div>
+                            </React.Fragment>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Step 4: Importing */}
           {step === 'importing' && (
             <div className="flex flex-col items-center justify-center py-16">
               <Loader2 className="w-12 h-12 text-blue-600 animate-spin mb-4" />
@@ -350,7 +511,7 @@ export const TripImport: React.FC<TripImportProps> = ({ onClose, onImportComplet
             </div>
           )}
 
-          {/* Step 4: Result */}
+          {/* Step 5: Result */}
           {step === 'result' && importResult && (
             <div className="space-y-5">
               {/* Success/failure banner */}
@@ -404,6 +565,14 @@ export const TripImport: React.FC<TripImportProps> = ({ onClose, onImportComplet
                 ← Choose Different File
               </button>
             )}
+            {step === 'conflicts' && (
+              <button
+                onClick={() => setStep('preview')}
+                className="px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-200 rounded-lg transition-colors"
+              >
+                ← Back to Preview
+              </button>
+            )}
           </div>
 
           <div className="flex gap-3">
@@ -416,11 +585,22 @@ export const TripImport: React.FC<TripImportProps> = ({ onClose, onImportComplet
 
             {step === 'preview' && (
               <button
-                onClick={handleImport}
+                onClick={handleValidate}
                 className="px-6 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors flex items-center gap-2"
               >
                 <Upload className="w-4 h-4" />
                 Import {totalTripsToCreate} Trips
+              </button>
+            )}
+
+            {step === 'conflicts' && (
+              <button
+                onClick={handleImport}
+                disabled={conflicts.some(c => !conflictResolutions[c.memberId])}
+                className="px-6 py-2 text-sm font-medium text-white bg-green-600 hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed rounded-lg transition-colors flex items-center gap-2"
+              >
+                <Upload className="w-4 h-4" />
+                Proceed with Import
               </button>
             )}
 

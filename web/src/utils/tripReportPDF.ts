@@ -49,6 +49,7 @@ interface TripReportData {
   driverSignature?: string;
   driverName?: string;
   locationHistory: LocationPoint[];
+  mapImageData?: string;
 }
 
 const STATUS_LABELS: Record<string, string> = {
@@ -249,92 +250,125 @@ export async function generateTripReportPDF(data: TripReportData): Promise<void>
     yPos += 8;
   }
 
-  // Signatures Section
-  if (patientSignature || driverSignature) {
+  // GPS Map Image
+  if (locationHistory.length > 0 && data.mapImageData) {
     if (yPos > 200) {
       doc.addPage();
       yPos = 20;
     }
 
-    doc.setFillColor(243, 244, 246);
-    doc.rect(margin, yPos, contentWidth, 8, 'F');
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(12);
-    doc.text('SIGNATURES', margin + 2, yPos + 5.5);
-    yPos += 12;
-
-    const sigWidth = (contentWidth - 5) / 2;
-    let xPos = margin;
-
-    // Patient Signature
-    if (patientSignature) {
-      doc.setDrawColor(147, 51, 234); // Purple
-      doc.setLineWidth(0.5);
-      doc.rect(xPos, yPos, sigWidth, 50);
+    try {
+      const mapWidth = contentWidth;
+      const mapHeight = 100; // Fixed height for map image
       
-      doc.setFontSize(10);
-      doc.setFont('helvetica', 'bold');
-      doc.text('PATIENT SIGNATURE', xPos + 2, yPos + 5);
-      
-      doc.setFontSize(8);
-      doc.setFont('helvetica', 'normal');
-      if (patientSignature.signer_name) {
-        doc.text(`Signed by: ${patientSignature.signer_name}`, xPos + 2, yPos + 10);
-      }
-      doc.text(`At: ${formatDateTimeUS(patientSignature.signed_at)}`, xPos + 2, yPos + 15);
-      
-      try {
-        doc.addImage(patientSignature.signature_data, 'PNG', xPos + 2, yPos + 20, sigWidth - 4, 25);
-      } catch (err) {
-        console.error('Error adding patient signature to PDF:', err);
-        doc.setFontSize(8);
-        doc.text('Signature image unavailable', xPos + 2, yPos + 30);
-      }
-
-      xPos += sigWidth + 5;
+      doc.addImage(data.mapImageData, 'PNG', margin, yPos, mapWidth, mapHeight);
+      yPos += mapHeight + 8;
+    } catch (err) {
+      console.error('Error adding map image to PDF:', err);
+      doc.setFontSize(9);
+      doc.setTextColor(200, 0, 0);
+      doc.text('Map image unavailable', margin + 2, yPos);
+      doc.setTextColor(0, 0, 0);
+      yPos += 8;
     }
-
-    // Driver Signature
-    if (driverSignature) {
-      doc.setDrawColor(59, 130, 246); // Blue
-      doc.setLineWidth(0.5);
-      doc.rect(xPos, yPos, sigWidth, 50);
-      
-      doc.setFontSize(10);
-      doc.setFont('helvetica', 'bold');
-      doc.text('DRIVER SIGNATURE', xPos + 2, yPos + 5);
-      
-      doc.setFontSize(8);
-      doc.setFont('helvetica', 'normal');
-      if (driverName) {
-        doc.text(`Driver: ${driverName}`, xPos + 2, yPos + 10);
-      }
-      doc.text('One-time signature on file', xPos + 2, yPos + 15);
-      
-      try {
-        doc.addImage(driverSignature, 'PNG', xPos + 2, yPos + 20, sigWidth - 4, 25);
-      } catch (err) {
-        console.error('Error adding driver signature to PDF:', err);
-        doc.setFontSize(8);
-        doc.text('Signature image unavailable', xPos + 2, yPos + 30);
-      }
-    }
-
-    yPos += 55;
   }
 
-  // Footer
-  const pageCount = doc.getNumberOfPages();
-  for (let i = 1; i <= pageCount; i++) {
-    doc.setPage(i);
-    doc.setFontSize(8);
-    doc.setTextColor(150, 150, 150);
-    doc.text(
-      `Page ${i} of ${pageCount} | Trip Report Generated ${new Date().toLocaleDateString()}`,
-      pageWidth / 2,
-      doc.internal.pageSize.getHeight() - 10,
-      { align: 'center' }
-    );
+  // Patient Signature (Receipt Style - After Status Timeline)
+  if (patientSignature) {
+    if (yPos > 230) {
+      doc.addPage();
+      yPos = 20;
+    }
+
+    yPos += 5;
+    
+    // Patient signature box (centered, like a stamp)
+    const patStampWidth = 80;
+    const patStampHeight = 35;
+    const patStampX = (pageWidth - patStampWidth) / 2;
+    
+    doc.setDrawColor(147, 51, 234); // Purple
+    doc.setLineWidth(1);
+    doc.rect(patStampX, yPos, patStampWidth, patStampHeight);
+    
+    doc.setFontSize(9);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(147, 51, 234);
+    doc.text('PATIENT SIGNATURE', patStampX + patStampWidth / 2, yPos + 5, { align: 'center' });
+    
+    doc.setFontSize(7);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(80, 80, 80);
+    if (patientSignature.signer_name) {
+      doc.text(patientSignature.signer_name, patStampX + patStampWidth / 2, yPos + 10, { align: 'center' });
+    }
+    doc.text(formatDateTimeUS(patientSignature.signed_at), patStampX + patStampWidth / 2, yPos + 14, { align: 'center' });
+    
+    try {
+      doc.addImage(patientSignature.signature_data, 'PNG', patStampX + 5, yPos + 16, patStampWidth - 10, 16);
+    } catch (err) {
+      console.error('Error adding patient signature to PDF:', err);
+      doc.setFontSize(7);
+      doc.setTextColor(200, 0, 0);
+      doc.text('Signature unavailable', patStampX + patStampWidth / 2, yPos + 22, { align: 'center' });
+    }
+
+    doc.setTextColor(0, 0, 0);
+    yPos += patStampHeight + 8;
+  }
+
+  // Driver Signature Stamp at Bottom (Receipt Style)
+  if (driverSignature) {
+    // Check if we need a new page
+    if (yPos > 230) {
+      doc.addPage();
+      yPos = 20;
+    }
+
+    // Line separator (like receipt tear-off)
+    doc.setDrawColor(150, 150, 150);
+    doc.setLineWidth(0.5);
+    doc.line(margin, yPos, pageWidth - margin, yPos);
+    yPos += 8;
+
+    // Driver signature box (centered, like a stamp)
+    const stampWidth = 80;
+    const stampHeight = 35;
+    const stampX = (pageWidth - stampWidth) / 2;
+    
+    doc.setDrawColor(37, 99, 235); // Blue
+    doc.setLineWidth(1);
+    doc.rect(stampX, yPos, stampWidth, stampHeight);
+    
+    doc.setFontSize(9);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(37, 99, 235);
+    doc.text('DRIVER SIGNATURE', stampX + stampWidth / 2, yPos + 5, { align: 'center' });
+    
+    doc.setFontSize(7);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(80, 80, 80);
+    if (driverName) {
+      doc.text(driverName, stampX + stampWidth / 2, yPos + 10, { align: 'center' });
+    }
+    
+    try {
+      doc.addImage(driverSignature, 'PNG', stampX + 5, yPos + 12, stampWidth - 10, 18);
+    } catch (err) {
+      console.error('Error adding driver signature to PDF:', err);
+      doc.setFontSize(7);
+      doc.setTextColor(200, 0, 0);
+      doc.text('Signature unavailable', stampX + stampWidth / 2, yPos + 22, { align: 'center' });
+    }
+
+    doc.setTextColor(0, 0, 0);
+    yPos += stampHeight + 5;
+
+    // Receipt footer text
+    doc.setFontSize(7);
+    doc.setFont('helvetica', 'italic');
+    doc.setTextColor(120, 120, 120);
+    doc.text('Thank you for using our transportation service', pageWidth / 2, yPos, { align: 'center' });
   }
 
   // Save the PDF
